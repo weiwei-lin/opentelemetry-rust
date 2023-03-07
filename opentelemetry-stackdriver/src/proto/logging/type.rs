@@ -1,6 +1,7 @@
 /// A common proto for logging HTTP requests. Only contains semantics
 /// defined by the HTTP specification. Product-specific logging
 /// information MUST be defined in a separate message.
+#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct HttpRequest {
     /// The request method. Examples: `"GET"`, `"HEAD"`, `"PUT"`, `"POST"`.
@@ -76,7 +77,7 @@ pub struct HttpRequest {
 /// filter expression will match log entries with severities `INFO`, `NOTICE`,
 /// and `WARNING`:
 ///
-///     severity > DEBUG AND severity <= WARNING
+///      severity > DEBUG AND severity <= WARNING
 ///
 /// If you are writing log entries, you should map other severity encodings to
 /// one of these standard levels. For example, you might map all of Java's FINE,
@@ -104,4 +105,38 @@ pub enum LogSeverity {
     Alert = 700,
     /// (800) One or more systems are unusable.
     Emergency = 800,
+}
+impl LogSeverity {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            LogSeverity::Default => "DEFAULT",
+            LogSeverity::Debug => "DEBUG",
+            LogSeverity::Info => "INFO",
+            LogSeverity::Notice => "NOTICE",
+            LogSeverity::Warning => "WARNING",
+            LogSeverity::Error => "ERROR",
+            LogSeverity::Critical => "CRITICAL",
+            LogSeverity::Alert => "ALERT",
+            LogSeverity::Emergency => "EMERGENCY",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "DEFAULT" => Some(Self::Default),
+            "DEBUG" => Some(Self::Debug),
+            "INFO" => Some(Self::Info),
+            "NOTICE" => Some(Self::Notice),
+            "WARNING" => Some(Self::Warning),
+            "ERROR" => Some(Self::Error),
+            "CRITICAL" => Some(Self::Critical),
+            "ALERT" => Some(Self::Alert),
+            "EMERGENCY" => Some(Self::Emergency),
+            _ => None,
+        }
+    }
 }

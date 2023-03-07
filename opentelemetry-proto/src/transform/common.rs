@@ -1,6 +1,3 @@
-use opentelemetry::sdk::trace::EvictedHashMap;
-use opentelemetry::{Array, Value};
-
 #[cfg(feature = "traces")]
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -13,10 +10,10 @@ pub(crate) fn to_nanos(time: SystemTime) -> u64 {
 
 #[cfg(feature = "gen-tonic")]
 pub mod tonic {
-    use super::*;
     use crate::proto::tonic::common::v1::{
         any_value, AnyValue, ArrayValue, InstrumentationLibrary, KeyValue,
     };
+    use opentelemetry::{sdk::trace::EvictedHashMap, Array, Value};
     use std::borrow::Cow;
 
     impl From<opentelemetry::sdk::InstrumentationLibrary> for InstrumentationLibrary {
@@ -28,6 +25,7 @@ pub mod tonic {
         }
     }
 
+    /// Wrapper type for Vec<[`KeyValue`](crate::proto::tonic::common::v1::KeyValue)>
     pub struct Attributes(pub ::std::vec::Vec<crate::proto::tonic::common::v1::KeyValue>);
 
     impl From<EvictedHashMap> for Attributes {
@@ -64,7 +62,7 @@ pub mod tonic {
                     Value::Bool(val) => Some(any_value::Value::BoolValue(val)),
                     Value::I64(val) => Some(any_value::Value::IntValue(val)),
                     Value::F64(val) => Some(any_value::Value::DoubleValue(val)),
-                    Value::String(val) => Some(any_value::Value::StringValue(val.into_owned())),
+                    Value::String(val) => Some(any_value::Value::StringValue(val.to_string())),
                     Value::Array(array) => Some(any_value::Value::ArrayValue(match array {
                         Array::Bool(vals) => array_into_proto(vals),
                         Array::I64(vals) => array_into_proto(vals),
@@ -91,9 +89,20 @@ pub mod tonic {
 
 #[cfg(feature = "gen-protoc")]
 pub mod grpcio {
-    use super::*;
-    use crate::proto::grpcio::common::{AnyValue, ArrayValue, KeyValue};
+    use crate::proto::grpcio::common::{AnyValue, ArrayValue, InstrumentationLibrary, KeyValue};
+    use opentelemetry::{sdk::trace::EvictedHashMap, Array, Value};
     use protobuf::RepeatedField;
+    use std::borrow::Cow;
+
+    impl From<opentelemetry::sdk::InstrumentationLibrary> for InstrumentationLibrary {
+        fn from(library: opentelemetry::sdk::InstrumentationLibrary) -> Self {
+            InstrumentationLibrary {
+                name: library.name.to_string(),
+                version: library.version.unwrap_or(Cow::Borrowed("")).to_string(),
+                ..Default::default()
+            }
+        }
+    }
 
     pub struct Attributes(pub ::protobuf::RepeatedField<crate::proto::grpcio::common::KeyValue>);
 
@@ -135,7 +144,7 @@ pub mod grpcio {
                 Value::Bool(val) => any_value.set_bool_value(val),
                 Value::I64(val) => any_value.set_int_value(val),
                 Value::F64(val) => any_value.set_double_value(val),
-                Value::String(val) => any_value.set_string_value(val.into_owned()),
+                Value::String(val) => any_value.set_string_value(val.to_string()),
                 Value::Array(array) => any_value.set_array_value(match array {
                     Array::Bool(vals) => array_into_proto(vals),
                     Array::I64(vals) => array_into_proto(vals),

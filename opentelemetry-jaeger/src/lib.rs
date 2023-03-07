@@ -1,13 +1,15 @@
 //! Collects OpenTelemetry spans and reports them to a given Jaeger
-//! `agent` or `collector` endpoint. See the [Jaeger Docs] for details
-//! about Jaeger and deployment information.
+//! `agent` or `collector` endpoint, propagate the tracing context between the applications using [Jaeger propagation format].
 //!
-//! *Compiler support: [requires `rustc` 1.46+][msrv]*
+//! See the [Jaeger Docs] for details about Jaeger and deployment information.
+//!
+//! *Compiler support: [requires `rustc` 1.57+][msrv]*
 //!
 //! [Jaeger Docs]: https://www.jaegertracing.io/docs/
 //! [msrv]: #supported-rust-versions
+//! [jaeger propagation format]: https://www.jaegertracing.io/docs/1.18/client-libraries/#propagation-format
 //!
-//! ### Quickstart
+//! ## Quickstart
 //!
 //! First make sure you have a running version of the Jaeger instance
 //! you want to send data to:
@@ -23,9 +25,10 @@
 //! use opentelemetry::trace::Tracer;
 //! use opentelemetry::global;
 //!
-//! fn main() -> Result<(), opentelemetry::trace::TraceError> {
+//! #[tokio::main]
+//! async fn main() -> Result<(), opentelemetry::trace::TraceError> {
 //!     global::set_text_map_propagator(opentelemetry_jaeger::Propagator::new());
-//!     let tracer = opentelemetry_jaeger::new_pipeline().install_simple()?;
+//!     let tracer = opentelemetry_jaeger::new_agent_pipeline().install_simple()?;
 //!
 //!     tracer.in_span("doing_work", |cx| {
 //!         // Traced app logic here...
@@ -37,11 +40,30 @@
 //! }
 //! ```
 //!
+//! Or if you are running on an async runtime like Tokio and want to report spans in batches
+//! ```no_run
+//! use opentelemetry::trace::Tracer;
+//! use opentelemetry::global;
+//! use opentelemetry::runtime::Tokio;
+//!
+//! fn main() -> Result<(), opentelemetry::trace::TraceError> {
+//!     global::set_text_map_propagator(opentelemetry_jaeger::Propagator::new());
+//!     let tracer = opentelemetry_jaeger::new_agent_pipeline().install_batch(Tokio)?;
+//!
+//!     tracer.in_span("doing_work", |cx| {
+//!         // Traced app logic here...
+//!     });
+//!
+//!     global::shutdown_tracer_provider(); // export remaining spans
+//!
+//!     Ok(())
+//! }
+//! ```
 //! ## Performance
 //!
 //! For optimal performance, a batch exporter is recommended as the simple exporter
-//! will export each span synchronously on drop. You can enable the [`rt-tokio`],
-//! [`rt-tokio-current-thread`] or [`rt-async-std`] features and specify a runtime
+//! will export each span synchronously on drop. You can enable the `rt-tokio`,
+//! `rt-tokio-current-thread` or `rt-async-std` features and specify a runtime
 //! on the pipeline builder to have a batch exporter configured for you
 //! automatically.
 //!
@@ -53,7 +75,7 @@
 //!
 //! ```no_run
 //! # fn main() -> Result<(), opentelemetry::trace::TraceError> {
-//! let tracer = opentelemetry_jaeger::new_pipeline()
+//! let tracer = opentelemetry_jaeger::new_agent_pipeline()
 //!     .install_batch(opentelemetry::runtime::Tokio)?;
 //! # Ok(())
 //! # }
@@ -62,7 +84,7 @@
 //! [`tokio`]: https://tokio.rs
 //! [`async-std`]: https://async.rs
 //!
-//! ### Jaeger Exporter From Environment Variables
+//! ## Jaeger Exporter From Environment Variables
 //!
 //! The jaeger pipeline builder can be configured dynamically via environment
 //! variables. All variables are optional, a full list of accepted options can
@@ -70,7 +92,7 @@
 //!
 //! [jaeger variables spec]: https://github.com/open-telemetry/opentelemetry-specification/blob/master/specification/sdk-environment-variables.md#jaeger-exporter
 //!
-//! ### Jaeger Collector Example
+//! ## Jaeger Collector Example
 //!
 //! If you want to skip the agent and submit spans directly to a Jaeger collector,
 //! you can enable the optional `collector_client` feature for this crate. This
@@ -78,25 +100,27 @@
 //!
 //! ```toml
 //! [dependencies]
-//! opentelemetry-jaeger = { version = "..", features = ["collector_client", "isahc"] }
+//! opentelemetry-jaeger = { version = "..", features = ["collector_client", "isahc_collector_client"] }
 //! ```
 //!
-//! Then you can use the [`with_collector_endpoint`] method to specify the endpoint:
+//! Then you can use the [`with_endpoint`] method to specify the endpoint:
 //!
-//! [`with_collector_endpoint`]: PipelineBuilder::with_collector_endpoint()
+//! [`with_endpoint`]: exporter::config::collector::CollectorPipeline::with_endpoint
 //!
 //! ```ignore
 //! // Note that this requires the `collector_client` feature.
-//! // We enabled the `isahc` feature for a default isahc http client.
-//! // You can also provide your own implementation via new_pipeline().with_http_client() method.
+//! // We enabled the `isahc_collector_client` feature for a default isahc http client.
+//! // You can also provide your own implementation via .with_http_client() method.
 //! use opentelemetry::trace::{Tracer, TraceError};
 //!
 //! fn main() -> Result<(), TraceError> {
-//!     let tracer = opentelemetry_jaeger::new_pipeline()
-//!         .with_collector_endpoint("http://localhost:14268/api/traces")
-//!         // optionally set username and password as well.
-//!         .with_collector_username("username")
-//!         .with_collector_password("s3cr3t")
+//!     let tracer = opentelemetry_jaeger::new_collector_pipeline()
+//!         .with_endpoint("http://localhost:14268/api/traces")
+//!         // optionally set username and password for authentication of the exporter.
+//!         .with_username("username")
+//!         .with_password("s3cr3t")
+//!         .with_isahc()
+//!         //.with_http_client(<your client>) provide custom http client implementation
 //!         .install_batch(opentelemetry::runtime::Tokio)?;
 //!
 //!     tracer.in_span("doing_work", |cx| {
@@ -112,7 +136,7 @@
 //! The full list of this mapping can be found in [OpenTelemetry to Jaeger Transformation].
 //!
 //! The **process tags** in jaeger spans will be mapped as resource in opentelemetry. You can
-//! set it through `OTEL_RESOURCE_ATTRIBUTES` environment variable or using [`PipelineBuilder::with_trace_config`].
+//! set it through `OTEL_RESOURCE_ATTRIBUTES` environment variable or using [`with_trace_config`].
 //!
 //! Note that to avoid copying data multiple times. Jaeger exporter will uses resource stored in [`Exporter`].
 //!
@@ -121,42 +145,46 @@
 //!
 //! Each jaeger span requires a **service name**. This will be mapped as a resource with `service.name` key.
 //! You can set it using one of the following methods from highest priority to lowest priority.
-//! 1. [`PipelineBuilder::with_service_name`].
-//! 2. include a `service.name` key value pairs when configure resource using [`PipelineBuilder::with_trace_config`].
+//! 1. [`with_service_name`].
+//! 2. include a `service.name` key value pairs when configure resource using [`with_trace_config`].
 //! 3. set the service name as `OTEL_SERVCE_NAME` environment variable.
 //! 4. set the `service.name` attributes in `OTEL_RESOURCE_ATTRIBUTES`.
 //! 5. if the service name is not provided by the above method. `unknown_service` will be used.
 //!
 //! Based on the service name, we update/append the `service.name` process tags in jaeger spans.
 //!
-//! [`set_attribute`]: https://docs.rs/opentelemetry/0.16.0/opentelemetry/trace/trait.Span.html#tymethod.set_attribute
-//!
+//! [`with_service_name`]: crate::exporter::config::agent::AgentPipeline::with_service_name
+//! [`with_trace_config`]: crate::exporter::config::agent::AgentPipeline::with_trace_config
+//! [`set_attribute`]: opentelemetry::trace::Span::set_attribute
 //! [OpenTelemetry to Jaeger Transformation]:https://github.com/open-telemetry/opentelemetry-specification/blob/main/specification/trace/sdk_exporters/jaeger.md
 //!
 //! ## Kitchen Sink Full Configuration
 //!
 //! Example showing how to override all configuration options. See the
-//! [`PipelineBuilder`] docs for details of each option.
+//! [`CollectorPipeline`] and [`AgentPipeline`] docs for details of each option.
 //!
+//! [`CollectorPipeline`]: config::collector::CollectorPipeline
+//! [`AgentPipeline`]: config::agent::AgentPipeline
 //!
+//! ### Export to agents
 //! ```no_run
-//! use opentelemetry::{KeyValue, trace::{Tracer, TraceError}};
-//! use opentelemetry::sdk::{trace::{self, IdGenerator, Sampler}, Resource};
-//! use opentelemetry::global;
+//! use opentelemetry::{sdk::{trace::{self, RandomIdGenerator, Sampler}, Resource}, global, KeyValue, trace::{Tracer, TraceError}};
 //!
 //! fn main() -> Result<(), TraceError> {
 //!     global::set_text_map_propagator(opentelemetry_jaeger::Propagator::new());
-//!     let tracer = opentelemetry_jaeger::new_pipeline()
-//!         .with_agent_endpoint("localhost:6831")
+//!     let tracer = opentelemetry_jaeger::new_agent_pipeline()
+//!         .with_endpoint("localhost:6831")
 //!         .with_service_name("my_app")
 //!         .with_max_packet_size(9_216)
+//!         .with_auto_split_batch(true)
+//!         .with_instrumentation_library_tags(false)
 //!         .with_trace_config(
 //!             trace::config()
 //!                 .with_sampler(Sampler::AlwaysOn)
-//!                 .with_id_generator(IdGenerator::default())
+//!                 .with_id_generator(RandomIdGenerator::default())
 //!                 .with_max_events_per_span(64)
 //!                 .with_max_attributes_per_span(16)
-//!                 .with_max_events_per_span(16)
+//!                  // resources will translated to tags in jaeger spans
 //!                 .with_resource(Resource::new(vec![KeyValue::new("key", "value"),
 //!                           KeyValue::new("process_key", "process_value")])),
 //!         )
@@ -166,17 +194,60 @@
 //!         // Traced app logic here...
 //!     });
 //!
-//!     global::shutdown_tracer_provider(); // export remaining spans
+//!     // export remaining spans. It's optional if you can accept spans loss for the last batch.
+//!     global::shutdown_tracer_provider();
 //!
 //!     Ok(())
 //! }
 //! ```
 //!
-//! ## Crate Feature Flags
+//! ### Export to collectors
+//! Note that this example requires `collecotr_client` and `isahc_collector_client` feature.
+//! ```ignore
+//! use opentelemetry::{sdk::{trace::{self, RandomIdGenerator, Sampler}, Resource}, global, KeyValue, trace::{Tracer, TraceError}};
+//!
+//! fn main() -> Result<(), TraceError> {
+//!     global::set_text_map_propagator(opentelemetry_jaeger::Propagator::new());
+//!     let tracer = opentelemetry_jaeger::new_collector_pipeline()
+//!         .with_endpoint("http://localhost:14250/api/trace") // set collector endpoint
+//!         .with_service_name("my_app") // the name of the application
+//!         .with_trace_config(
+//!             trace::config()
+//!                 .with_sampler(Sampler::AlwaysOn)
+//!                 .with_id_generator(RandomIdGenerator::default())
+//!                 .with_max_events_per_span(64)
+//!                 .with_max_attributes_per_span(16)
+//!                 .with_max_events_per_span(16)
+//!                 // resources will translated to tags in jaeger spans
+//!                 .with_resource(Resource::new(vec![KeyValue::new("key", "value"),
+//!                           KeyValue::new("process_key", "process_value")])),
+//!         )
+//!         // we config a surf http client with 2 seconds timeout
+//!         // and have basic authentication header with username=username, password=s3cr3t
+//!         .with_isahc() // requires `isahc_collector_client` feature
+//!         .with_username("username")
+//!         .with_password("s3cr3t")
+//!         .with_timeout(std::time::Duration::from_secs(2))
+//!         .install_batch(opentelemetry::runtime::Tokio)?;
+//!
+//!     tracer.in_span("doing_work", |cx| {
+//!         // Traced app logic here...
+//!     });
+//!
+//!     // export remaining spans. It's optional if you can accept spans loss for the last batch.
+//!     global::shutdown_tracer_provider();
+//!
+//!     Ok(())
+//! }
+//! ```
+//!
+//! # Crate Feature Flags
 //!
 //! The following crate feature flags are available:
 //!
 //! * `collector_client`: Export span data directly to a Jaeger collector. User MUST provide the http client.
+//!
+//! * `hyper_collector_client`: Export span data with Jaeger collector backed by a hyper default http client.
 //!
 //! * `surf_collector_client`: Export span data with Jaeger collector backed by a surf default http client.
 //!
@@ -205,16 +276,16 @@
 //! [`async-std`]: https://async.rs
 //! [`opentelemetry`]: https://crates.io/crates/opentelemetry
 //!
-//! ## Supported Rust Versions
+//! # Supported Rust Versions
 //!
 //! OpenTelemetry is built against the latest stable release. The minimum
-//! supported version is 1.46. The current OpenTelemetry version is not
+//! supported version is 1.57. The current OpenTelemetry version is not
 //! guaranteed to build on Rust versions earlier than the minimum supported
 //! version.
 //!
 //! The current stable Rust compiler and the three most recent minor versions
 //! before it will always be supported. For example, if the current stable
-//! compiler version is 1.49, the minimum supported version will not be
+//! compiler version is 1.57, the minimum supported version will not be
 //! increased past 1.46, three minor versions prior. Increasing the minimum
 //! supported compiler version is not considered a semver breaking change as
 //! long as doing so complies with this policy.
@@ -227,21 +298,33 @@
     unreachable_pub,
     unused
 )]
-#![cfg_attr(docsrs, feature(doc_cfg), deny(rustdoc::broken_intra_doc_links))]
+#![cfg_attr(
+    docsrs,
+    feature(doc_cfg, doc_auto_cfg),
+    deny(rustdoc::broken_intra_doc_links)
+)]
 #![doc(
     html_logo_url = "https://raw.githubusercontent.com/open-telemetry/opentelemetry-rust/main/assets/logo.svg"
 )]
 #![cfg_attr(test, deny(warnings))]
 
+pub use exporter::config;
+#[cfg(feature = "collector_client")]
+pub use exporter::config::collector::new_collector_pipeline;
+#[cfg(feature = "wasm_collector_client")]
+pub use exporter::config::collector::new_wasm_collector_pipeline;
+pub use exporter::{
+    config::agent::new_agent_pipeline, runtime::JaegerTraceRuntime, Error, Exporter, Process,
+};
+pub use propagator::Propagator;
+
 mod exporter;
+
+#[cfg(feature = "integration_test")]
+#[doc(hidden)]
+pub mod testing;
+
 mod propagator {
-    //! # Jaeger Propagator
-    //!
-    //! Extract and inject values from Jaeger's `uber-trace-id` header.
-    //!
-    //! See [`Jaeger documentation`] for detail of Jaeger propagation format.
-    //!
-    //! [`Jaeger documentation`]: https://www.jaegertracing.io/docs/1.18/client-libraries/#propagation-format
     use opentelemetry::{
         global::{self, Error},
         propagation::{text_map_propagator::FieldIter, Extractor, Injector, TextMapPropagator},
@@ -259,31 +342,111 @@ mod propagator {
 
     const TRACE_FLAG_DEBUG: TraceFlags = TraceFlags::new(0x04);
 
-    lazy_static::lazy_static! {
-        static ref JAEGER_HEADER_FIELD: [String; 1] = [JAEGER_HEADER.to_string()];
+    /// The Jaeger propagator propagates span contexts in [Jaeger propagation format].
+    ///
+    /// Cross-cutting concerns send their state to the next process using `Propagator`s,
+    /// which are defined as objects used to read and write context data to and from messages
+    /// exchanged by the applications. Each concern creates a set of `Propagator`s for every
+    /// supported `Propagator` type.
+    ///
+    /// Note that jaeger header can be set in http header or encoded as url.
+    ///
+    /// ## Examples
+    /// ```
+    /// # use opentelemetry::{global, trace::{Tracer, TraceContextExt}, Context};
+    /// # use opentelemetry_jaeger::Propagator as JaegerPropagator;
+    /// # fn send_request() {
+    /// // setup jaeger propagator
+    /// global::set_text_map_propagator(JaegerPropagator::default());
+    /// // You also can init propagator with custom header name
+    /// // global::set_text_map_propagator(JaegerPropagator::with_custom_header("my-custom-header"));
+    ///
+    /// // before sending requests to downstream services.
+    /// let mut headers = std::collections::HashMap::new(); // replace by http header of the outgoing request
+    /// let caller_span = global::tracer("caller").start("say hello");
+    /// let cx = Context::current_with_span(caller_span);
+    /// global::get_text_map_propagator(|propagator| {
+    ///     propagator.inject_context(&cx, &mut headers); // propagator serialize the tracing context
+    /// });
+    /// // Send the request..
+    /// # }
+    ///
+    ///
+    /// # fn receive_request() {
+    /// // Receive the request sent above on the other service...
+    /// // setup jaeger propagator
+    /// global::set_text_map_propagator(JaegerPropagator::new());
+    /// // You also can init propagator with custom header name
+    /// // global::set_text_map_propagator(JaegerPropagator::with_custom_header("my-custom-header"));
+    ///
+    /// let headers = std::collections::HashMap::new(); // replace this with http header map from incoming requests.
+    /// let parent_context = global::get_text_map_propagator(|propagator| {
+    ///      propagator.extract(&headers)
+    /// });
+    ///
+    /// // this span's parent span will be caller_span in send_request functions.
+    /// let receiver_span = global::tracer("receiver").start_with_context("hello", &parent_context);
+    /// # }
+    /// ```
+    ///
+    ///  [jaeger propagation format]: https://www.jaegertracing.io/docs/1.18/client-libraries/#propagation-format
+    #[derive(Clone, Debug)]
+    pub struct Propagator {
+        baggage_prefix: &'static str,
+        header_name: &'static str,
+        fields: [String; 1],
     }
 
-    /// The Jaeger propagator propagates span contexts in jaeger's propagation format.
-    ///
-    /// See [`Jaeger documentation`] for format details.
-    ///
-    /// Note that jaeger header can be set in http header or encoded as url
-    ///
-    ///  [`Jaeger documentation`]: https://www.jaegertracing.io/docs/1.18/client-libraries/#propagation-format
-    #[derive(Clone, Debug, Default)]
-    pub struct Propagator {
-        _private: (),
+    // Implement default using Propagator::new() to not break compatibility with previous versions
+    impl Default for Propagator {
+        fn default() -> Self {
+            Propagator::new()
+        }
     }
 
     impl Propagator {
         /// Create a Jaeger propagator
         pub fn new() -> Self {
-            Propagator::default()
+            Self::with_custom_header_and_baggage(JAEGER_HEADER, JAEGER_BAGGAGE_PREFIX)
+        }
+
+        /// Create a Jaeger propagator with custom header name
+        pub fn with_custom_header(custom_header_name: &'static str) -> Self {
+            Self::with_custom_header_and_baggage(custom_header_name, JAEGER_BAGGAGE_PREFIX)
+        }
+
+        /// Create a Jaeger propagator with custom header name and baggage prefix
+        ///
+        /// NOTE: it's implicitly fallback to the default header names when the ane of provided custom_* is empty
+        /// Default header-name is `uber-trace-id` and baggage-prefix is `uberctx-`
+        /// The format of serialized context and baggage's stays unchanged and not depending
+        /// on provided header name and prefix.
+        pub fn with_custom_header_and_baggage(
+            custom_header_name: &'static str,
+            custom_baggage_prefix: &'static str,
+        ) -> Self {
+            let custom_header_name = if custom_header_name.trim().is_empty() {
+                JAEGER_HEADER
+            } else {
+                custom_header_name
+            };
+
+            let custom_baggage_prefix = if custom_baggage_prefix.trim().is_empty() {
+                JAEGER_BAGGAGE_PREFIX
+            } else {
+                custom_baggage_prefix
+            };
+
+            Propagator {
+                baggage_prefix: custom_baggage_prefix.trim(),
+                header_name: custom_header_name.trim(),
+                fields: [custom_header_name.to_owned()],
+            }
         }
 
         /// Extract span context from header value
         fn extract_span_context(&self, extractor: &dyn Extractor) -> Result<SpanContext, ()> {
-            let mut header_value = Cow::from(extractor.get(JAEGER_HEADER).unwrap_or(""));
+            let mut header_value = Cow::from(extractor.get(self.header_name).unwrap_or(""));
             // if there is no :, it means header_value could be encoded as url, try decode first
             if !header_value.contains(':') {
                 header_value = Cow::from(header_value.replace("%3A", ":"));
@@ -347,17 +510,17 @@ mod propagator {
         }
 
         fn extract_trace_state(&self, extractor: &dyn Extractor) -> Result<TraceState, ()> {
-            let uber_context_keys = extractor
+            let baggage_keys = extractor
                 .keys()
                 .into_iter()
-                .filter(|key| key.starts_with(JAEGER_BAGGAGE_PREFIX))
+                .filter(|key| key.starts_with(self.baggage_prefix))
                 .filter_map(|key| {
                     extractor
                         .get(key)
                         .map(|value| (key.to_string(), value.to_string()))
                 });
 
-            match TraceState::from_key_value(uber_context_keys) {
+            match TraceState::from_key_value(baggage_keys) {
                 Ok(trace_state) => Ok(trace_state),
                 Err(trace_state_err) => {
                     global::handle_error(Error::Trace(TraceError::Other(Box::new(
@@ -384,25 +547,24 @@ mod propagator {
                     0x00
                 };
                 let header_value = format!(
-                    "{:032x}:{:016x}:{:01}:{:01}",
+                    "{:032x}:{:016x}:{:01}:{:01x}",
                     span_context.trace_id(),
                     span_context.span_id(),
                     DEPRECATED_PARENT_SPAN,
                     flag,
                 );
-                injector.set(JAEGER_HEADER, header_value);
+                injector.set(self.header_name, header_value);
             }
         }
 
         fn extract_with_context(&self, cx: &Context, extractor: &dyn Extractor) -> Context {
-            cx.with_remote_span_context(
-                self.extract_span_context(extractor)
-                    .unwrap_or_else(|_| SpanContext::empty_context()),
-            )
+            self.extract_span_context(extractor)
+                .map(|sc| cx.with_remote_span_context(sc))
+                .unwrap_or_else(|_| cx.clone())
         }
 
         fn fields(&self) -> FieldIter<'_> {
-            FieldIter::new(JAEGER_HEADER_FIELD.as_ref())
+            FieldIter::new(self.fields.as_ref())
         }
     }
 
@@ -529,6 +691,32 @@ mod propagator {
             ]
         }
 
+        /// Try to extract the context using the created Propagator with custom header name
+        /// from the Extractor under the `context_key` key.
+        fn _test_extract_with_header(construct_header: &'static str, context_key: &'static str) {
+            let propagator = Propagator::with_custom_header(construct_header);
+            for (trace_id, span_id, flag, expected) in get_extract_data() {
+                let mut map: HashMap<String, String> = HashMap::new();
+                map.set(context_key, format!("{}:{}:0:{}", trace_id, span_id, flag));
+                let context = propagator.extract(&map);
+                assert_eq!(context.span().span_context(), &expected);
+            }
+        }
+
+        /// Try to inject the context using the created Propagator with custom header name
+        /// and expect the serialized context existence under `expect_header` key.
+        fn _test_inject_with_header(construct_header: &'static str, expect_header: &'static str) {
+            let propagator = Propagator::with_custom_header(construct_header);
+            for (span_context, header_value) in get_inject_data() {
+                let mut injector = HashMap::new();
+                propagator.inject_context(
+                    &Context::current_with_span(TestSpan(span_context)),
+                    &mut injector,
+                );
+                assert_eq!(injector.get(expect_header), Some(&header_value));
+            }
+        }
+
         #[test]
         fn test_extract_empty() {
             let map: HashMap<String, String> = HashMap::new();
@@ -538,14 +726,22 @@ mod propagator {
         }
 
         #[test]
-        fn test_extract() {
+        fn test_inject_extract_with_default() {
+            let propagator = Propagator::default();
+            for (span_context, header_value) in get_inject_data() {
+                let mut injector = HashMap::new();
+                propagator.inject_context(
+                    &Context::current_with_span(TestSpan(span_context)),
+                    &mut injector,
+                );
+                assert_eq!(injector.get(JAEGER_HEADER), Some(&header_value));
+            }
             for (trace_id, span_id, flag, expected) in get_extract_data() {
                 let mut map: HashMap<String, String> = HashMap::new();
                 map.set(
                     JAEGER_HEADER,
                     format!("{}:{}:0:{}", trace_id, span_id, flag),
                 );
-                let propagator = Propagator::new();
                 let context = propagator.extract(&map);
                 assert_eq!(context.span().span_context(), &expected);
             }
@@ -597,21 +793,41 @@ mod propagator {
         }
 
         #[test]
+        fn test_extract() {
+            _test_extract_with_header(JAEGER_HEADER, JAEGER_HEADER)
+        }
+
+        #[test]
         fn test_inject() {
-            let propagator = Propagator::new();
-            for (span_context, header_value) in get_inject_data() {
-                let mut injector = HashMap::new();
-                propagator.inject_context(
-                    &Context::current_with_span(TestSpan(span_context)),
-                    &mut injector,
-                );
-                assert_eq!(injector.get(JAEGER_HEADER), Some(&header_value));
+            _test_inject_with_header(JAEGER_HEADER, JAEGER_HEADER)
+        }
+
+        #[test]
+        fn test_extract_with_invalid_header() {
+            for construct in &["", "   "] {
+                _test_extract_with_header(construct, JAEGER_HEADER)
+            }
+        }
+
+        #[test]
+        fn test_extract_with_valid_header() {
+            for construct in &["custom-header", "custom-header   ", "   custom-header   "] {
+                _test_extract_with_header(construct, "custom-header")
+            }
+        }
+
+        #[test]
+        fn test_inject_with_invalid_header() {
+            for construct in &["", "   "] {
+                _test_inject_with_header(construct, JAEGER_HEADER)
+            }
+        }
+
+        #[test]
+        fn test_inject_with_valid_header() {
+            for construct in &["custom-header", "custom-header   ", "   custom-header   "] {
+                _test_inject_with_header(construct, "custom-header")
             }
         }
     }
 }
-
-pub use exporter::{
-    new_pipeline, runtime::JaegerTraceRuntime, Error, Exporter, PipelineBuilder, Process,
-};
-pub use propagator::Propagator;

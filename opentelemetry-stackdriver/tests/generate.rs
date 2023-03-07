@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs;
 use std::path::PathBuf;
+use std::process::Command;
 
 use futures::stream::FuturesUnordered;
 use futures::stream::StreamExt;
@@ -24,7 +25,7 @@ async fn sync_schemas() {
         let filename = cache.join(path);
         let client = client.clone();
         futures.push(async move {
-            let url = format!("{}/{}", BASE_URI, path);
+            let url = format!("{BASE_URI}/{path}");
             let rsp = client.get(url).send().await.unwrap();
             let body = rsp.text().await.unwrap();
             fs::create_dir_all(filename.parent().unwrap()).unwrap();
@@ -45,7 +46,7 @@ fn generated_code_is_fresh() {
 
     let schemas = GENERATE_FROM_SCHEMAS
         .iter()
-        .map(|s| format!("google/{}", s))
+        .map(|s| format!("google/{s}"))
         .collect::<Vec<_>>();
 
     let tmp_dir = tempfile::tempdir().unwrap();
@@ -53,7 +54,6 @@ fn generated_code_is_fresh() {
     tonic_build::configure()
         .build_client(true)
         .build_server(false)
-        .format(which::which("rustfmt").is_ok())
         .out_dir(&tmp_dir)
         .compile(&schemas, &["proto"])
         .unwrap();
@@ -63,6 +63,15 @@ fn generated_code_is_fresh() {
     let (mut modules, mut renames) = (Vec::new(), Vec::new());
     for entry in fs::read_dir(&tmp_dir).unwrap() {
         let path = entry.unwrap().path();
+
+        // Tonic now uses prettyplease instead of rustfmt, which causes a
+        // number of differences in the generated code.
+        Command::new("rustfmt")
+            .arg("--edition=2021")
+            .arg(&path)
+            .output()
+            .unwrap();
+
         let file_name_str = path.file_name().and_then(|s| s.to_str()).unwrap();
         let (base, _) = file_name_str
             .strip_prefix("google.")
@@ -171,6 +180,14 @@ fn generated_code_is_fresh() {
         root.push_str(module.last().unwrap());
         root.push_str(";\n");
         previous = parent;
+    }
+
+    while level > 0 {
+        level -= 1;
+        for _ in 0..(level * 4) {
+            root.push(' ');
+        }
+        root.push_str("}\n");
     }
 
     fs::write(tmp_dir.path().join("mod.rs"), root).unwrap();

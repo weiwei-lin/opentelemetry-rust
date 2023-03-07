@@ -23,7 +23,7 @@ analysis in order to understand your software's performance and behavior. This
 crate provides a trace pipeline and exporter for sending span information to a
 Jaeger `agent` or `collector` endpoint for processing and visualization.
 
-*Compiler support: [requires `rustc` 1.46+][msrv]*
+*Compiler support: [requires `rustc` 1.57+][msrv]*
 
 [`Jaeger`]: https://www.jaegertracing.io/
 [`OpenTelemetry`]: https://crates.io/crates/opentelemetry
@@ -47,7 +47,7 @@ use opentelemetry::trace::Tracer;
 
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
     global::set_text_map_propagator(opentelemetry_jaeger::Propagator::new());
-    let tracer = opentelemetry_jaeger::new_pipeline().install_simple()?;
+    let tracer = opentelemetry_jaeger::new_agent_pipeline().install_simple()?;
 
     tracer.in_span("doing_work", |cx| {
         // Traced app logic here...
@@ -76,7 +76,7 @@ opentelemetry-jaeger = { version = "*", features = ["rt-tokio"] }
 ```
 
 ```rust
-let tracer = opentelemetry_jaeger::new_pipeline()
+let tracer = opentelemetry_jaeger::new_agent_pipeline()
     .install_batch(opentelemetry::runtime::Tokio)?;
 ```
 
@@ -109,22 +109,24 @@ Then you can use the [`with_collector_endpoint`] method to specify the endpoint:
 
 ```rust
 // Note that this requires one of the following features enabled so that there is a default http client implementation
+// * hyper_collector_client
 // * surf_collector_client
 // * reqwest_collector_client
 // * reqwest_blocking_collector_client
+// * reqwest_rustls_collector_client
 // * isahc_collector_client
 
 // You can also provide your own implementation by enable
-// `collecor_client` and set it with
+// `collector_client` and set it with
 // new_pipeline().with_http_client() method.
 use opentelemetry::trace::Tracer;
 
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
-    let tracer = opentelemetry_jaeger::new_pipeline()
-        .with_collector_endpoint("http://localhost:14268/api/traces")
+    let tracer = opentelemetry_jaeger::new_collector_pipeline()
+        .with_endpoint("http://localhost:14268/api/traces")
         // optionally set username and password as well.
-        .with_collector_username("username")
-        .with_collector_password("s3cr3t")
+        .with_username("username")
+        .with_password("s3cr3t")
         .install_batch()?;
 
     tracer.in_span("doing_work", |cx| {
@@ -147,7 +149,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
 ## Supported Rust Versions
 
 OpenTelemetry is built against the latest stable release. The minimum supported
-version is 1.46. The current OpenTelemetry version is not guaranteed to build
+version is 1.45. The current OpenTelemetry version is not guaranteed to build
 on Rust versions earlier than the minimum supported version.
 
 The current stable Rust compiler and the three most recent minor versions

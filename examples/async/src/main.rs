@@ -46,7 +46,7 @@ async fn write(stream: &mut TcpStream) -> io::Result<usize> {
 
 async fn run(addr: &SocketAddr) -> io::Result<usize> {
     let tracer = global::tracer("runner");
-    let span = tracer.start(format!("running: {}", addr));
+    let span = tracer.start(format!("running: {addr}"));
     let cx = Context::current_with_span(span);
 
     let mut stream = connect(addr).with_context(cx.clone()).await?;
@@ -54,7 +54,7 @@ async fn run(addr: &SocketAddr) -> io::Result<usize> {
 }
 
 fn init_tracer() -> Result<sdktrace::Tracer, TraceError> {
-    opentelemetry_jaeger::new_pipeline()
+    opentelemetry_jaeger::new_agent_pipeline()
         .with_service_name("trace-demo")
         .install_batch(opentelemetry::runtime::Tokio)
 }

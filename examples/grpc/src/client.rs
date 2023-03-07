@@ -24,13 +24,14 @@ impl<'a> Injector for MetadataMap<'a> {
     }
 }
 
+#[allow(clippy::derive_partial_eq_without_eq)] // tonic don't derive Eq for generated types. We shouldn't manually change it.
 pub mod hello_world {
     tonic::include_proto!("helloworld");
 }
 
 fn tracing_init() -> TraceResult<Tracer> {
     global::set_text_map_propagator(TraceContextPropagator::new());
-    opentelemetry_jaeger::new_pipeline()
+    opentelemetry_jaeger::new_agent_pipeline()
         .with_service_name("grpc-client")
         .install_simple()
 }
@@ -53,7 +54,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>
 
     cx.span().add_event(
         "response-received".to_string(),
-        vec![KeyValue::new("response", format!("{:?}", response))],
+        vec![KeyValue::new("response", format!("{response:?}"))],
     );
 
     shutdown_tracer_provider();

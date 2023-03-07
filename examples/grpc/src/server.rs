@@ -12,6 +12,7 @@ use opentelemetry::{
 };
 use std::error::Error;
 
+#[allow(clippy::derive_partial_eq_without_eq)] // tonic don't derive Eq for generated types. We shouldn't manually change it.
 pub mod hello_world {
     tonic::include_proto!("helloworld"); // The string specified here must match the proto package name.
 }
@@ -48,7 +49,7 @@ impl Greeter for MyGreeter {
         let parent_cx =
             global::get_text_map_propagator(|prop| prop.extract(&MetadataMap(request.metadata())));
         let mut span = global::tracer("greeter").start_with_context("Processing reply", &parent_cx);
-        span.set_attribute(KeyValue::new("request", format!("{:?}", request)));
+        span.set_attribute(KeyValue::new("request", format!("{request:?}")));
 
         // Return an instance of type HelloReply
         let reply = hello_world::HelloReply {
@@ -61,7 +62,7 @@ impl Greeter for MyGreeter {
 
 fn tracing_init() -> Result<impl Tracer, TraceError> {
     global::set_text_map_propagator(TraceContextPropagator::new());
-    opentelemetry_jaeger::new_pipeline()
+    opentelemetry_jaeger::new_agent_pipeline()
         .with_service_name("grpc-server")
         .install_simple()
 }

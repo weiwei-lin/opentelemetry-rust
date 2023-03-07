@@ -1,9 +1,12 @@
 use std::fmt::Debug;
 
+#[doc(no_inline)]
+pub use bytes::Bytes;
+#[doc(no_inline)]
+pub use http::{Request, Response};
+
 use async_trait::async_trait;
-use bytes::Bytes;
-use http::{Request, Response};
-use opentelemetry::{
+use opentelemetry_api::{
     propagation::{Extractor, Injector},
     trace::TraceError,
 };
@@ -64,10 +67,14 @@ mod reqwest {
     impl HttpClient for reqwest::Client {
         async fn send(&self, request: Request<Vec<u8>>) -> Result<Response<Bytes>, HttpError> {
             let request = request.try_into()?;
-            let response = self.execute(request).await?;
-            Ok(Response::builder()
+            let mut response = self.execute(request).await?;
+            let headers = std::mem::take(response.headers_mut());
+            let mut http_response = Response::builder()
                 .status(response.status())
-                .body(response.bytes().await?)?)
+                .body(response.bytes().await?)?;
+            *http_response.headers_mut() = headers;
+
+            Ok(http_response)
         }
     }
 
@@ -75,17 +82,41 @@ mod reqwest {
     impl HttpClient for reqwest::blocking::Client {
         async fn send(&self, request: Request<Vec<u8>>) -> Result<Response<Bytes>, HttpError> {
             let request = request.try_into()?;
-            let response = self.execute(request)?;
-            Ok(Response::builder()
+            let mut response = self.execute(request)?;
+            let headers = std::mem::take(response.headers_mut());
+            let mut http_response = Response::builder()
                 .status(response.status())
-                .body(response.bytes()?)?)
+                .body(response.bytes()?)?;
+            *http_response.headers_mut() = headers;
+
+            Ok(http_response)
         }
     }
 }
 
 #[cfg(feature = "surf")]
-mod surf {
+pub mod surf {
+    use std::str::FromStr;
+
+    use http::{header::HeaderName, HeaderMap, HeaderValue};
+
     use super::{async_trait, Bytes, HttpClient, HttpError, Request, Response};
+
+    #[derive(Debug)]
+    pub struct BasicAuthMiddleware(pub surf::http::auth::BasicAuth);
+
+    #[async_trait]
+    impl surf::middleware::Middleware for BasicAuthMiddleware {
+        async fn handle(
+            &self,
+            mut req: surf::Request,
+            client: surf::Client,
+            next: surf::middleware::Next<'_>,
+        ) -> surf::Result<surf::Response> {
+            req.insert_header(self.0.name(), self.0.value());
+            next.run(req, client).await
+        }
+    }
 
     #[async_trait]
     impl HttpClient for surf::Client {
@@ -103,9 +134,22 @@ mod surf {
             }
 
             let mut response = self.send(request_builder).await?;
-            Ok(Response::builder()
+            let mut headers = HeaderMap::new();
+            for header_name in response.header_names() {
+                for header_value in &response[header_name.to_string().as_str()] {
+                    headers.append(
+                        HeaderName::from_str(&header_name.to_string())?,
+                        HeaderValue::from_str(header_value.as_str())?,
+                    );
+                }
+            }
+            let mut http_response = Response::builder()
                 .status(response.status() as u16)
-                .body(response.body_bytes().await?.into())?)
+                .body(response.body_bytes().await?.into())?;
+
+            *http_response.headers_mut() = headers;
+
+            Ok(http_response)
         }
     }
 }
@@ -122,9 +166,78 @@ mod isahc {
             let mut response = self.send_async(request).await?;
             let mut bytes = Vec::with_capacity(response.body().len().unwrap_or(0).try_into()?);
             response.copy_to(&mut bytes).await?;
-            Ok(Response::builder()
+
+            let headers = std::mem::take(response.headers_mut());
+            let mut http_response = Response::builder()
+                .status(response.status().as_u16())
+                .body(bytes.into())?;
+            *http_response.headers_mut() = headers;
+
+            Ok(http_response)
+        }
+    }
+}
+
+#[cfg(any(feature = "hyper", feature = "hyper_tls"))]
+pub mod hyper {
+    use super::{async_trait, Bytes, HttpClient, HttpError, Request, Response};
+    use http::HeaderValue;
+    use hyper::client::connect::Connect;
+    use hyper::Client;
+    use std::fmt::Debug;
+    use std::time::Duration;
+    use tokio::time;
+
+    #[derive(Debug, Clone)]
+    pub struct HyperClient<C> {
+        inner: Client<C>,
+        timeout: Duration,
+        authorization: Option<HeaderValue>,
+    }
+
+    impl<C> HyperClient<C> {
+        pub fn new_with_timeout(inner: Client<C>, timeout: Duration) -> Self {
+            Self {
+                inner,
+                timeout,
+                authorization: None,
+            }
+        }
+
+        pub fn new_with_timeout_and_authorization_header(
+            inner: Client<C>,
+            timeout: Duration,
+            authorization: HeaderValue,
+        ) -> Self {
+            Self {
+                inner,
+                timeout,
+                authorization: Some(authorization),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl<C> HttpClient for HyperClient<C>
+    where
+        C: Connect + Send + Sync + Clone + Debug + 'static,
+    {
+        async fn send(&self, request: Request<Vec<u8>>) -> Result<Response<Bytes>, HttpError> {
+            let (parts, body) = request.into_parts();
+            let mut request = Request::from_parts(parts, body.into());
+            if let Some(ref authorization) = self.authorization {
+                request
+                    .headers_mut()
+                    .insert(http::header::AUTHORIZATION, authorization.clone());
+            }
+            let mut response = time::timeout(self.timeout, self.inner.request(request)).await??;
+            let headers = std::mem::take(response.headers_mut());
+            let mut http_response = Response::builder()
                 .status(response.status())
-                .body(bytes.into())?)
+                .body(hyper::body::to_bytes(response.into_body()).await?)?;
+            *http_response.headers_mut() = headers;
+
+            Ok(http_response)
         }
     }
 }

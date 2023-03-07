@@ -3,16 +3,25 @@
 //! ### Prometheus Exporter Example
 //!
 //! ```rust
-//! use opentelemetry::{global, KeyValue, sdk::Resource};
+//! use opentelemetry::{global, Context, KeyValue, sdk::Resource};
+//! use opentelemetry::sdk::export::metrics::aggregation;
+//! use opentelemetry::sdk::metrics::{controllers, processors, selectors};
 //! use opentelemetry_prometheus::PrometheusExporter;
 //! use prometheus::{TextEncoder, Encoder};
 //!
 //! fn init_meter() -> PrometheusExporter {
-//!     opentelemetry_prometheus::exporter()
-//!         .with_resource(Resource::new(vec![KeyValue::new("R", "V")]))
-//!         .init()
+//!     let controller = controllers::basic(
+//!         processors::factory(
+//!             selectors::simple::histogram([1.0, 2.0, 5.0, 10.0, 20.0, 50.0]),
+//!             aggregation::cumulative_temporality_selector(),
+//!         )
+//!     )
+//!     .build();
+//!
+//!     opentelemetry_prometheus::exporter(controller).init()
 //! }
 //!
+//! let cx = Context::current();
 //! let exporter = init_meter();
 //! let meter = global::meter("my-app");
 //!
@@ -22,12 +31,12 @@
 //!     .with_description("Counts things")
 //!     .init();
 //! let recorder = meter
-//!     .i64_value_recorder("a.value_recorder")
+//!     .i64_histogram("a.histogram")
 //!     .with_description("Records values")
 //!     .init();
 //!
-//! counter.add(100, &[KeyValue::new("key", "value")]);
-//! recorder.record(100, &[KeyValue::new("key", "value")]);
+//! counter.add(&cx, 100, &[KeyValue::new("key", "value")]);
+//! recorder.record(&cx, 100, &[KeyValue::new("key", "value")]);
 //!
 //! // Encode data as text or protobuf
 //! let encoder = TextEncoder::new();
@@ -39,15 +48,18 @@
 //! //
 //! // # HELP a_counter Counts things
 //! // # TYPE a_counter counter
-//! // a_counter{R="V",key="value"} 100
-//! // # HELP a_value_recorder Records values
-//! // # TYPE a_value_recorder histogram
-//! // a_value_recorder_bucket{R="V",key="value",le="0.5"} 0
-//! // a_value_recorder_bucket{R="V",key="value",le="0.9"} 0
-//! // a_value_recorder_bucket{R="V",key="value",le="0.99"} 0
-//! // a_value_recorder_bucket{R="V",key="value",le="+Inf"} 1
-//! // a_value_recorder_sum{R="V",key="value"} 100
-//! // a_value_recorder_count{R="V",key="value"} 1
+//! // a_counter{R="V",key="value",otel_scope_name="my-app",otel_scope_version=""} 100
+//! // # HELP a_histogram Records values
+//! // # TYPE a_histogram histogram
+//! // a_histogram_bucket{R="V",key="value",le="0.5",otel_scope_name="my-app",otel_scope_version=""} 0
+//! // a_histogram_bucket{R="V",key="value",le="0.9",otel_scope_name="my-app",otel_scope_version=""} 0
+//! // a_histogram_bucket{R="V",key="value",le="0.99",otel_scope_name="my-app",otel_scope_version=""} 0
+//! // a_histogram_bucket{R="V",key="value",le="+Inf",otel_scope_name="my-app",otel_scope_version=""} 1
+//! // a_histogram_sum{R="V",key="value",otel_scope_name="my-app",otel_scope_version=""} 100
+//! // a_histogram_count{R="V",key="value",otel_scope_name="my-app",otel_scope_version=""} 1
+//! // HELP otel_scope_info Instrumentation Scope metadata
+//! // TYPE otel_scope_info gauge
+//! // otel_scope_info{otel_scope_name="ex.com/B",otel_scope_version=""} 1
 //! ```
 #![warn(
     future_incompatible,
@@ -58,183 +70,87 @@
     unreachable_pub,
     unused
 )]
-#![cfg_attr(docsrs, feature(doc_cfg), deny(rustdoc::broken_intra_doc_links))]
+#![cfg_attr(
+    docsrs,
+    feature(doc_cfg, doc_auto_cfg),
+    deny(rustdoc::broken_intra_doc_links)
+)]
 #![doc(
     html_logo_url = "https://raw.githubusercontent.com/open-telemetry/opentelemetry-rust/main/assets/logo.svg"
 )]
 #![cfg_attr(test, deny(warnings))]
 
+use opentelemetry::metrics::MeterProvider;
+use opentelemetry::sdk::export::metrics::aggregation::{
+    self, AggregationKind, Temporality, TemporalitySelector,
+};
+use opentelemetry::sdk::export::metrics::InstrumentationLibraryReader;
+use opentelemetry::sdk::metrics::sdk_api::Descriptor;
 #[cfg(feature = "prometheus-encoding")]
 pub use prometheus::{Encoder, TextEncoder};
 
-use opentelemetry::global;
 use opentelemetry::sdk::{
     export::metrics::{
-        AggregatorSelector, CheckpointSet, ExportKindSelector, Histogram, LastValue, Record, Sum,
+        aggregation::{Histogram, LastValue, Sum},
+        Record,
     },
     metrics::{
         aggregators::{HistogramAggregator, LastValueAggregator, SumAggregator},
-        controllers,
-        selectors::simple::Selector,
-        PullController,
+        controllers::BasicController,
+        sdk_api::NumberKind,
     },
     Resource,
 };
-use opentelemetry::{
-    attributes,
-    metrics::{registry::RegistryMeterProvider, MetricsError, NumberKind},
-    Key, Value,
-};
-use std::env;
-use std::num::ParseIntError;
+use opentelemetry::{attributes, metrics::MetricsError, Context, Key, Value};
+use opentelemetry::{global, InstrumentationLibrary, StringValue};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 mod sanitize;
 
 use sanitize::sanitize;
 
-/// Cache disabled by default.
-const DEFAULT_CACHE_PERIOD: Duration = Duration::from_secs(0);
+/// Monotonic Sum metric points MUST have _total added as a suffix to the metric name
+/// https://github.com/open-telemetry/opentelemetry-specification/blob/v1.14.0/specification/metrics/data-model.md#sums-1
+const MONOTONIC_COUNTER_SUFFIX: &str = "_total";
 
-const EXPORT_KIND_SELECTOR: ExportKindSelector = ExportKindSelector::Cumulative;
+/// Instrumentation Scope name MUST added as otel_scope_name label.
+const OTEL_SCOPE_NAME: &str = "otel_scope_name";
 
-/// Default host used by the Prometheus Exporter when env variable not found
-const DEFAULT_EXPORTER_HOST: &str = "0.0.0.0";
+/// Instrumentation Scope version MUST added as otel_scope_name label.
+const OTEL_SCOPE_VERSION: &str = "otel_scope_version";
 
-/// Default port used by the Prometheus Exporter when env variable not found
-const DEFAULT_EXPORTER_PORT: u16 = 9464;
+/// otel_scope_name metric name.
+const SCOPE_INFO_METRIC_NAME: &str = "otel_scope_info";
 
-/// The hostname for the Promtheus Exporter
-const ENV_EXPORTER_HOST: &str = "OTEL_EXPORTER_PROMETHEUS_HOST";
-
-/// The port for the Prometheus Exporter
-const ENV_EXPORTER_PORT: &str = "OTEL_EXPORTER_PROMETHEUS_PORT";
-
+/// otel_scope_name metric help.
+const SCOPE_INFO_DESCRIPTION: &str = "Instrumentation Scope metadata";
 /// Create a new prometheus exporter builder.
-pub fn exporter() -> ExporterBuilder {
-    ExporterBuilder::default()
+pub fn exporter(controller: BasicController) -> ExporterBuilder {
+    ExporterBuilder::new(controller)
 }
 
 /// Configuration for the prometheus exporter.
 #[derive(Debug)]
 pub struct ExporterBuilder {
-    /// The OpenTelemetry `Resource` associated with all Meters
-    /// created by the pull controller.
-    resource: Option<Resource>,
-
-    /// The period which a recently-computed result will be returned without
-    /// gathering metric data again.
-    ///
-    /// If the period is zero, caching of the result is disabled, which is the
-    /// prometheus default.
-    cache_period: Option<Duration>,
-
-    /// The default summary quantiles to use. Use nil to specify the system-default
-    /// summary quantiles.
-    default_summary_quantiles: Option<Vec<f64>>,
-
-    /// Defines the default histogram bucket boundaries.
-    default_histogram_boundaries: Option<Vec<f64>>,
-
     /// The prometheus registry that will be used to register instruments.
     ///
     /// If not set a new empty `Registry` is created.
     registry: Option<prometheus::Registry>,
 
-    /// The host used by the prometheus exporter
-    ///
-    /// If not set it will be defaulted to all addresses "0.0.0.0"
-    host: Option<String>,
+    /// The metrics controller
+    controller: BasicController,
 
-    /// The port used by the prometheus exporter
-    ///
-    /// If not set it will be defaulted to port 9464
-    port: Option<u16>,
-
-    /// The aggregator selector used by the prometheus exporter.
-    aggegator_selector: Option<Box<dyn AggregatorSelector + Send + Sync>>,
-}
-
-impl Default for ExporterBuilder {
-    fn default() -> Self {
-        let port: Option<u16> = match env::var(ENV_EXPORTER_PORT) {
-            Err(_) => None,
-            Ok(p_str) => p_str
-                .parse()
-                .map_err(|err: ParseIntError| {
-                    let err_msg = format!(
-                        "Unable to parse environment variable {}=\"{}\" - {}. Falling back to default port {}. ",
-                        ENV_EXPORTER_PORT, p_str, err, DEFAULT_EXPORTER_PORT
-                    );
-                    global::handle_error(global::Error::Other(err_msg));
-                    err
-                })
-                .ok(),
-        };
-
-        ExporterBuilder {
-            resource: None,
-            cache_period: None,
-            default_histogram_boundaries: None,
-            default_summary_quantiles: None,
-            registry: None,
-            host: env::var(ENV_EXPORTER_HOST).ok().filter(|s| !s.is_empty()),
-            port,
-            aggegator_selector: None,
-        }
-    }
+    /// config for exporter
+    config: Option<ExporterConfig>,
 }
 
 impl ExporterBuilder {
-    /// Set the resource to be associated with all `Meter`s for this exporter
-    pub fn with_resource(self, resource: Resource) -> Self {
+    /// Create a new exporter builder with a given controller
+    pub fn new(controller: BasicController) -> Self {
         ExporterBuilder {
-            resource: Some(resource),
-            ..self
-        }
-    }
-
-    /// Set the period which a recently-computed result will be returned without
-    /// gathering metric data again.
-    ///
-    /// If the period is zero, caching of the result is disabled (default).
-    pub fn with_cache_period(self, period: Duration) -> Self {
-        ExporterBuilder {
-            cache_period: Some(period),
-            ..self
-        }
-    }
-
-    /// Set the default summary quantiles to be used by exported prometheus histograms
-    pub fn with_default_summary_quantiles(self, quantiles: Vec<f64>) -> Self {
-        ExporterBuilder {
-            default_summary_quantiles: Some(quantiles),
-            ..self
-        }
-    }
-
-    /// Set the default boundaries to be used by exported prometheus histograms
-    pub fn with_default_histogram_boundaries(self, boundaries: Vec<f64>) -> Self {
-        ExporterBuilder {
-            default_histogram_boundaries: Some(boundaries),
-            ..self
-        }
-    }
-
-    /// Set the host for the prometheus exporter
-    pub fn with_host(self, host: String) -> Self {
-        ExporterBuilder {
-            host: Some(host),
-            ..self
-        }
-    }
-
-    /// Set the port for the prometheus exporter
-    pub fn with_port(self, port: u16) -> Self {
-        ExporterBuilder {
-            port: Some(port),
-            ..self
+            registry: None,
+            controller,
+            config: Some(Default::default()),
         }
     }
 
@@ -246,13 +162,10 @@ impl ExporterBuilder {
         }
     }
 
-    /// Set the aggregation selector for the prometheus exporter
-    pub fn with_aggregator_selector<T>(self, aggregator_selector: T) -> Self
-    where
-        T: AggregatorSelector + Send + Sync + 'static,
-    {
+    /// Set config to be used by this exporter
+    pub fn with_config(self, config: ExporterConfig) -> Self {
         ExporterBuilder {
-            aggegator_selector: Some(Box::new(aggregator_selector)),
+            config: Some(config),
             ..self
         }
     }
@@ -260,44 +173,24 @@ impl ExporterBuilder {
     /// Sets up a complete export pipeline with the recommended setup, using the
     /// recommended selector and standard processor.
     pub fn try_init(self) -> Result<PrometheusExporter, MetricsError> {
+        let config = self.config.unwrap_or_default();
+
         let registry = self.registry.unwrap_or_else(prometheus::Registry::new);
-        // reserved for future use cases
-        let _default_summary_quantiles = self
-            .default_summary_quantiles
-            .unwrap_or_else(|| vec![0.5, 0.9, 0.99]);
-        let default_histogram_boundaries = self
-            .default_histogram_boundaries
-            .unwrap_or_else(|| vec![0.5, 0.9, 0.99]);
-        let selector = self
-            .aggegator_selector
-            .unwrap_or_else(|| Box::new(Selector::Histogram(default_histogram_boundaries)));
-        let mut controller_builder = controllers::pull(selector, Box::new(EXPORT_KIND_SELECTOR))
-            .with_cache_period(self.cache_period.unwrap_or(DEFAULT_CACHE_PERIOD))
-            .with_memory(true);
-        if let Some(resource) = self.resource {
-            controller_builder = controller_builder.with_resource(resource);
-        }
-        let controller = controller_builder.build();
 
-        global::set_meter_provider(controller.provider());
-
-        let host = self
-            .host
-            .unwrap_or_else(|| DEFAULT_EXPORTER_HOST.to_string());
-        let port = self.port.unwrap_or(DEFAULT_EXPORTER_PORT);
-
-        let controller = Arc::new(Mutex::new(controller));
-        let collector = Collector::with_controller(controller.clone());
+        let controller = Arc::new(Mutex::new(self.controller));
+        let collector =
+            Collector::with_controller(controller.clone()).with_scope_info(config.with_scope_info);
         registry
             .register(Box::new(collector))
             .map_err(|e| MetricsError::Other(e.to_string()))?;
 
-        Ok(PrometheusExporter {
+        let exporter = PrometheusExporter {
             registry,
             controller,
-            host,
-            port,
-        })
+        };
+        global::set_meter_provider(exporter.meter_provider()?);
+
+        Ok(exporter)
     }
 
     /// Sets up a complete export pipeline with the recommended setup, using the
@@ -311,6 +204,30 @@ impl ExporterBuilder {
     }
 }
 
+/// Config for prometheus exporter
+#[derive(Debug)]
+pub struct ExporterConfig {
+    /// Add the otel_scope_info metric and otel_scope_ labels when with_scope_info is true, and the default value is true.
+    with_scope_info: bool,
+}
+
+impl Default for ExporterConfig {
+    fn default() -> Self {
+        ExporterConfig {
+            with_scope_info: true,
+        }
+    }
+}
+
+impl ExporterConfig {
+    /// Set with_scope_info for [`ExporterConfig`].
+    /// It's the flag to add the otel_scope_info metric and otel_scope_ labels.
+    pub fn with_scope_info(mut self, enabled: bool) -> Self {
+        self.with_scope_info = enabled;
+        self
+    }
+}
+
 /// An implementation of `metrics::Exporter` that sends metrics to Prometheus.
 ///
 /// This exporter supports Prometheus pulls, as such it does not
@@ -318,69 +235,46 @@ impl ExporterBuilder {
 #[derive(Clone, Debug)]
 pub struct PrometheusExporter {
     registry: prometheus::Registry,
-    controller: Arc<Mutex<PullController>>,
-    host: String,
-    port: u16,
+    controller: Arc<Mutex<BasicController>>,
 }
 
 impl PrometheusExporter {
-    #[deprecated(
-        since = "0.9.0",
-        note = "Please use the ExporterBuilder to initialize a PrometheusExporter"
-    )]
-    /// Create a new prometheus exporter
-    pub fn new(
-        registry: prometheus::Registry,
-        controller: PullController,
-        host: String,
-        port: u16,
-    ) -> Result<Self, MetricsError> {
-        let controller = Arc::new(Mutex::new(controller));
-        let collector = Collector::with_controller(controller.clone());
-        registry
-            .register(Box::new(collector))
-            .map_err(|e| MetricsError::Other(e.to_string()))?;
-
-        Ok(PrometheusExporter {
-            registry,
-            controller,
-            host,
-            port,
-        })
-    }
-
     /// Returns a reference to the current prometheus registry.
     pub fn registry(&self) -> &prometheus::Registry {
         &self.registry
     }
 
     /// Get this exporter's provider.
-    pub fn provider(&self) -> Result<RegistryMeterProvider, MetricsError> {
+    pub fn meter_provider(&self) -> Result<impl MeterProvider, MetricsError> {
         self.controller
             .lock()
             .map_err(Into::into)
-            .map(|locked| locked.provider())
-    }
-
-    /// Get the exporters host for prometheus.
-    pub fn host(&self) -> &str {
-        self.host.as_str()
-    }
-
-    /// Get the exporters port for prometheus.
-    pub fn port(&self) -> u16 {
-        self.port
+            .map(|locked| locked.clone())
     }
 }
 
 #[derive(Debug)]
 struct Collector {
-    controller: Arc<Mutex<PullController>>,
+    controller: Arc<Mutex<BasicController>>,
+    with_scope_info: bool,
+}
+
+impl TemporalitySelector for Collector {
+    fn temporality_for(&self, descriptor: &Descriptor, kind: &AggregationKind) -> Temporality {
+        aggregation::cumulative_temporality_selector().temporality_for(descriptor, kind)
+    }
 }
 
 impl Collector {
-    fn with_controller(controller: Arc<Mutex<PullController>>) -> Self {
-        Collector { controller }
+    fn with_controller(controller: Arc<Mutex<BasicController>>) -> Self {
+        Collector {
+            controller,
+            with_scope_info: true,
+        }
+    }
+    fn with_scope_info(mut self, with_scope_info: bool) -> Self {
+        self.with_scope_info = with_scope_info;
+        self
     }
 }
 
@@ -392,37 +286,45 @@ impl prometheus::core::Collector for Collector {
 
     /// Collect all otel metrics and convert to prometheus metrics.
     fn collect(&self) -> Vec<prometheus::proto::MetricFamily> {
-        if let Ok(mut controller) = self.controller.lock() {
+        if let Ok(controller) = self.controller.lock() {
             let mut metrics = Vec::new();
 
-            if let Err(err) = controller.collect() {
+            if let Err(err) = controller.collect(&Context::current()) {
                 global::handle_error(err);
                 return metrics;
             }
 
-            if let Err(err) = controller.try_for_each(&EXPORT_KIND_SELECTOR, &mut |record| {
-                let agg = record.aggregator().ok_or(MetricsError::NoDataCollected)?;
-                let number_kind = record.descriptor().number_kind();
-                let instrument_kind = record.descriptor().instrument_kind();
-
-                let desc = get_metric_desc(record);
-                let labels = get_metric_labels(record);
-
-                if let Some(hist) = agg.as_any().downcast_ref::<HistogramAggregator>() {
-                    metrics.push(build_histogram(hist, number_kind, desc, labels)?);
-                } else if let Some(sum) = agg.as_any().downcast_ref::<SumAggregator>() {
-                    let counter = if instrument_kind.monotonic() {
-                        build_monotonic_counter(sum, number_kind, desc, labels)?
-                    } else {
-                        build_non_monotonic_counter(sum, number_kind, desc, labels)?
-                    };
-
-                    metrics.push(counter);
-                } else if let Some(last) = agg.as_any().downcast_ref::<LastValueAggregator>() {
-                    metrics.push(build_last_value(last, number_kind, desc, labels)?);
+            if let Err(err) = controller.try_for_each(&mut |library, reader| {
+                let mut scope_labels: Vec<prometheus::proto::LabelPair> = Vec::new();
+                if self.with_scope_info {
+                    scope_labels = get_scope_labels(library);
+                    metrics.push(build_scope_metric(scope_labels.clone()));
                 }
+                reader.try_for_each(self, &mut |record| {
+                    let agg = record.aggregator().ok_or(MetricsError::NoDataCollected)?;
+                    let number_kind = record.descriptor().number_kind();
+                    let instrument_kind = record.descriptor().instrument_kind();
 
-                Ok(())
+                    let desc = get_metric_desc(record);
+                    let labels =
+                        get_metric_labels(record, controller.resource(), &mut scope_labels.clone());
+
+                    if let Some(hist) = agg.as_any().downcast_ref::<HistogramAggregator>() {
+                        metrics.push(build_histogram(hist, number_kind, desc, labels)?);
+                    } else if let Some(sum) = agg.as_any().downcast_ref::<SumAggregator>() {
+                        let counter = if instrument_kind.monotonic() {
+                            build_monotonic_counter(sum, number_kind, desc, labels)?
+                        } else {
+                            build_non_monotonic_counter(sum, number_kind, desc, labels)?
+                        };
+
+                        metrics.push(counter);
+                    } else if let Some(last) = agg.as_any().downcast_ref::<LastValueAggregator>() {
+                        metrics.push(build_last_value(last, number_kind, desc, labels)?);
+                    }
+
+                    Ok(())
+                })
             }) {
                 global::handle_error(err);
             }
@@ -498,7 +400,7 @@ fn build_monotonic_counter(
     m.set_counter(c);
 
     let mut mf = prometheus::proto::MetricFamily::default();
-    mf.set_name(desc.name);
+    mf.set_name(desc.name + MONOTONIC_COUNTER_SUFFIX);
     mf.set_help(desc.help);
     mf.set_field_type(prometheus::proto::MetricType::COUNTER);
     mf.set_metric(protobuf::RepeatedField::from_vec(vec![m]));
@@ -545,6 +447,45 @@ fn build_histogram(
     Ok(mf)
 }
 
+fn build_scope_metric(
+    labels: Vec<prometheus::proto::LabelPair>,
+) -> prometheus::proto::MetricFamily {
+    let mut g = prometheus::proto::Gauge::new();
+    g.set_value(1.0);
+
+    let mut m = prometheus::proto::Metric::default();
+    m.set_label(protobuf::RepeatedField::from_vec(labels));
+    m.set_gauge(g);
+
+    let mut mf = prometheus::proto::MetricFamily::default();
+    mf.set_name(String::from(SCOPE_INFO_METRIC_NAME));
+    mf.set_help(String::from(SCOPE_INFO_DESCRIPTION));
+    mf.set_field_type(prometheus::proto::MetricType::GAUGE);
+    mf.set_metric(protobuf::RepeatedField::from_vec(vec![m]));
+
+    mf
+}
+
+fn get_scope_labels(library: &InstrumentationLibrary) -> Vec<prometheus::proto::LabelPair> {
+    let mut labels = Vec::new();
+    labels.push(build_label_pair(
+        &Key::new(OTEL_SCOPE_NAME),
+        &Value::String(StringValue::from(library.name.clone().to_string())),
+    ));
+    if let Some(version) = library.version.to_owned() {
+        labels.push(build_label_pair(
+            &Key::new(OTEL_SCOPE_VERSION),
+            &Value::String(StringValue::from(version.to_string())),
+        ));
+    } else {
+        labels.push(build_label_pair(
+            &Key::new(OTEL_SCOPE_VERSION),
+            &Value::String(StringValue::from("")),
+        ));
+    }
+    labels
+}
+
 fn build_label_pair(key: &Key, value: &Value) -> prometheus::proto::LabelPair {
     let mut lp = prometheus::proto::LabelPair::new();
     lp.set_name(sanitize(key.as_str()));
@@ -553,12 +494,20 @@ fn build_label_pair(key: &Key, value: &Value) -> prometheus::proto::LabelPair {
     lp
 }
 
-fn get_metric_labels(record: &Record<'_>) -> Vec<prometheus::proto::LabelPair> {
+fn get_metric_labels(
+    record: &Record<'_>,
+    resource: &Resource,
+    scope_labels: &mut Vec<prometheus::proto::LabelPair>,
+) -> Vec<prometheus::proto::LabelPair> {
     // Duplicate keys are resolved by taking the record label value over
     // the resource value.
-    let iter = attributes::merge_iters(record.attributes().iter(), record.resource().iter());
-    iter.map(|(key, value)| build_label_pair(key, value))
-        .collect()
+    let iter = attributes::merge_iters(record.attributes().iter(), resource.iter());
+    let mut labels: Vec<prometheus::proto::LabelPair> = iter
+        .map(|(key, value)| build_label_pair(key, value))
+        .collect();
+
+    labels.append(scope_labels);
+    labels
 }
 
 struct PrometheusMetricDesc {
@@ -574,38 +523,4 @@ fn get_metric_desc(record: &Record<'_>) -> PrometheusMetricDesc {
         .cloned()
         .unwrap_or_else(|| desc.name().to_string());
     PrometheusMetricDesc { name, help }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::env;
-
-    use super::*;
-
-    #[test]
-    fn test_exporter_builder_default() {
-        env::remove_var(ENV_EXPORTER_HOST);
-        env::remove_var(ENV_EXPORTER_PORT);
-        let exporter = ExporterBuilder::default().init();
-        assert_eq!(exporter.host(), "0.0.0.0");
-        assert_eq!(exporter.port(), 9464);
-
-        env::set_var(ENV_EXPORTER_HOST, "prometheus-test");
-        env::set_var(ENV_EXPORTER_PORT, "9000");
-        let exporter = ExporterBuilder::default().init();
-        assert_eq!(exporter.host(), "prometheus-test");
-        assert_eq!(exporter.port(), 9000);
-
-        env::set_var(ENV_EXPORTER_HOST, "");
-        env::set_var(ENV_EXPORTER_PORT, "");
-        let exporter = ExporterBuilder::default().init();
-        assert_eq!(exporter.host(), "0.0.0.0");
-        assert_eq!(exporter.port(), 9464);
-
-        env::set_var(ENV_EXPORTER_HOST, "");
-        env::set_var(ENV_EXPORTER_PORT, "not_a_number");
-        let exporter = ExporterBuilder::default().init();
-        assert_eq!(exporter.host(), "0.0.0.0");
-        assert_eq!(exporter.port(), 9464);
-    }
 }

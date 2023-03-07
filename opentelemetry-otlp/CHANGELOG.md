@@ -1,4 +1,20 @@
 # Changelog
+## Main
+
+### Changed
+
+- Improve OTLP exporter environment variable handling #912
+- OTLP exporter default endpoint changed to http #912
+
+## v0.11.0
+
+### Changed
+
+- reduce `tokio` feature requirements #750
+- Update to opentelemetry v0.18.0
+- Update to opentelemetry-http v0.7.0
+- Update `tonic` to 0.7 #783
+- Automatically add traces / metrics paths #806
 
 ## v0.10.0
 

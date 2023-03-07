@@ -17,7 +17,7 @@ async fn handle(req: Request<Body>) -> Result<Response<Body>, Infallible> {
         propagator.extract(&HeaderExtractor(req.headers()))
     });
     let mut span = global::tracer("example/server").start_with_context("hello", &parent_cx);
-    span.add_event("handling this...".to_string(), Vec::new());
+    span.add_event("handling this...", Vec::new());
 
     Ok(Response::new("Hello, World!".into()))
 }
@@ -42,8 +42,8 @@ async fn main() {
 
     let server = Server::bind(&addr).serve(make_svc);
 
-    println!("Listening on {}", addr);
+    println!("Listening on {addr}");
     if let Err(e) = server.await {
-        eprintln!("server error: {}", e);
+        eprintln!("server error: {e}");
     }
 }

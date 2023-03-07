@@ -2,7 +2,7 @@
 //! services to capture distributed traces and metrics from your application. You
 //! can analyze them using [Prometheus], [Jaeger], and other observability tools.
 //!
-//! *Compiler support: [requires `rustc` 1.46+][msrv]*
+//! *Compiler support: [requires `rustc` 1.57+][msrv]*
 //!
 //! [Prometheus]: https://prometheus.io
 //! [Jaeger]: https://www.jaegertracing.io
@@ -82,7 +82,9 @@
 //! ```
 //! # #[cfg(feature = "metrics")]
 //! # {
-//! use opentelemetry::{global, KeyValue};
+//! use opentelemetry::{global, Context, KeyValue};
+//!
+//! let cx = Context::current();
 //!
 //! // get a meter from a provider
 //! let meter = global::meter("my_service");
@@ -91,7 +93,7 @@
 //! let counter = meter.u64_counter("my_counter").init();
 //!
 //! // record a measurement
-//! counter.add(1, &[KeyValue::new("http.client_ip", "83.164.160.102")]);
+//! counter.add(&cx, 1, &[KeyValue::new("http.client_ip", "83.164.160.102")]);
 //! # }
 //! ```
 //!
@@ -104,7 +106,6 @@
 //!
 //! * `trace`: Includes the trace API and SDK (enabled by default).
 //! * `metrics`: Includes the unstable metrics API and SDK.
-//! * `serialize`: Adds [serde] serializers for common types.
 //!
 //! Support for recording and exporting telemetry asynchronously can be added
 //! via the following flags:
@@ -115,7 +116,6 @@
 //!
 //! [tokio]: https://crates.io/crates/tokio
 //! [async-std]: https://crates.io/crates/async-std
-//! [serde]: https://crates.io/crates/serde
 //!
 //! ## Related Crates
 //!
@@ -192,7 +192,7 @@
 //! ## Supported Rust Versions
 //!
 //! OpenTelemetry is built against the latest stable release. The minimum
-//! supported version is 1.46. The current OpenTelemetry version is not
+//! supported version is 1.57. The current OpenTelemetry version is not
 //! guaranteed to build on Rust versions earlier than the minimum supported
 //! version.
 //!
@@ -212,59 +212,33 @@
     unused
 )]
 #![allow(clippy::needless_doctest_main)]
-#![cfg_attr(docsrs, feature(doc_cfg), deny(rustdoc::broken_intra_doc_links))]
+#![cfg_attr(
+    docsrs,
+    feature(doc_cfg, doc_auto_cfg),
+    deny(rustdoc::broken_intra_doc_links)
+)]
 #![doc(
     html_logo_url = "https://raw.githubusercontent.com/open-telemetry/opentelemetry-rust/main/assets/logo.svg"
 )]
 #![cfg_attr(test, deny(warnings))]
 
-pub mod global;
-pub mod sdk;
+pub use opentelemetry_api::*;
+pub use opentelemetry_sdk::runtime;
 
+#[doc(hidden)]
 #[cfg(feature = "testing")]
-#[doc(hidden)]
-pub mod testing;
+pub mod testing {
+    pub use opentelemetry_sdk::testing::*;
+}
 
-pub mod baggage;
-
-mod context;
-
-pub use context::{Context, ContextGuard};
-
-mod common;
-
-pub use common::{Array, Key, KeyValue, Value};
-
-pub mod runtime;
-
-#[doc(hidden)]
-pub mod util;
-
-#[cfg(feature = "metrics")]
-#[cfg_attr(docsrs, doc(cfg(feature = "metrics")))]
-pub mod attributes;
-
-#[cfg(feature = "metrics")]
-#[cfg_attr(docsrs, doc(cfg(feature = "metrics")))]
-pub mod metrics;
-
-pub mod propagation;
-
-#[cfg(feature = "trace")]
-#[cfg_attr(docsrs, doc(cfg(feature = "trace")))]
-pub mod trace;
-
-#[cfg(any(feature = "metrics", feature = "trace"))]
-pub(crate) mod time {
-    use std::time::SystemTime;
-
-    #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) fn now() -> SystemTime {
-        SystemTime::now()
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    pub(crate) fn now() -> SystemTime {
-        SystemTime::UNIX_EPOCH + std::time::Duration::from_millis(js_sys::Date::now() as u64)
-    }
+/// # OpenTelemetry SDK
+///
+/// This SDK provides an opinionated reference implementation of
+/// the OpenTelemetry API. The SDK implements the specifics of
+/// deciding which data to collect through `Sampler`s, and
+/// facilitates the delivery of telemetry data to storage systems
+/// through `Exporter`s. These can be configured on `Tracer` and
+/// `Meter` creation.
+pub mod sdk {
+    pub use opentelemetry_sdk::*;
 }

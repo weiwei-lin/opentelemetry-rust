@@ -1,14 +1,14 @@
 [package]
 name = "dynatrace"
 version = "0.1.0"
-edition = "2018"
+edition = "2021"
 publish = false
 
 [dependencies]
 futures = "0.3"
 http = "0.2"
 lazy_static = "1.4"
-opentelemetry = { path = "../../opentelemetry", default-features = false, features = ["trace", "serialize"] }
+opentelemetry = { path = "../../opentelemetry", default-features = false, features = ["trace"] }
 opentelemetry-dynatrace = { path = "../../opentelemetry-dynatrace" }
 opentelemetry-http = { path = "../../opentelemetry-http", default-features = false }
 opentelemetry-otlp = { path = "../../opentelemetry-otlp", default-features = false, features = ["http-proto", "reqwest-client"] }

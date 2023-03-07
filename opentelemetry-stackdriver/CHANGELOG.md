@@ -1,5 +1,35 @@
 # Changelog
 
+## v0.15.0
+
+### Added
+
+- Added mappings from OTel attributes to Google Cloud Traces #744
+- Added `MonitoredResource::CloudRunRevision` #847
+
+### Changed
+
+- Upgrade to opentelemetry v0.18.0
+- Upgrade to opentelemetry-semantic-conventions v0.10
+- update tonic and prost #825
+
+### Fixed
+
+- Fix `LogEntry.trace` not populated correctly #850
+
+## v0.14.0
+
+### Changed
+
+- Upgrade to new gcp_auth version (#722)
+- Stop leaking dependency error types into public API (#722)
+- Clarify type of MonitoredResource (#722)
+
+### Fixed
+
+- Fixed issue with futures dependency (#722)
+- Don't set up logging channel if no logging is configured (#722)
+
 ## v0.13.0
 
 ### Changed

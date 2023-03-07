@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.16.0
+
+## Added
+
+- Add support for OTEL_EXPORTER_ZIPKIN_* variables. #718
+
+## Changed
+
+- Add defaults for timeouts to HTTP clients #718
+- Update to opentelemetry v0.18.0
+- Update to opentelemetry-http v0.7.0
+- Update to opentelemetry-semantic-conventions v0.10.0
+
 ## v0.15.0
 
 ### Changed
@@ -116,5 +129,5 @@
 
 ### Added
 
-- Exporter to Zipkin collector through HTTP API 
+- Exporter to Zipkin collector through HTTP API
 

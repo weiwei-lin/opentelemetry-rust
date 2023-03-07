@@ -1,14 +1,13 @@
 [package]
 name = "actix-http-example"
 version = "0.1.0"
-edition = "2018"
+edition = "2021"
 publish = false
 
 [dependencies]
 opentelemetry = { path = "../../opentelemetry", features = ["rt-tokio"] }
-opentelemetry-jaeger = { path = "../../opentelemetry-jaeger", features = ["reqwest_collector_client", "rt-tokio"] }
-thrift = "0.13"
-actix-web = "4.0.0-beta.4"
-actix-service = "2.0.0-beta.5"
-env_logger = "0.8.2"
+opentelemetry-jaeger = { path = "../../opentelemetry-jaeger", features = ["reqwest_collector_client", "rt-tokio-current-thread"] }
+actix-web = "4.1.0"
+actix-service = "2.0.0"
+env_logger = "0.9.0"
 tokio = { version = "1", features = ["full"] }

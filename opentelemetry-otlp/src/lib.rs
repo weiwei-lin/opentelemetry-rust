@@ -86,9 +86,9 @@
 //!
 //! ```no_run
 //! use opentelemetry::{KeyValue, trace::Tracer};
-//! use opentelemetry::sdk::{trace::{self, IdGenerator, Sampler}, Resource};
+//! use opentelemetry::sdk::{trace::{self, RandomIdGenerator, Sampler}, Resource};
 //! use opentelemetry::sdk::metrics::{selectors, PushController};
-//! use opentelemetry::util::tokio_interval_stream;
+//! use opentelemetry::sdk::util::tokio_interval_stream;
 //! use opentelemetry_otlp::{Protocol, WithExportConfig, ExportConfig};
 //! use std::time::Duration;
 //! use tonic::metadata::*;
@@ -112,7 +112,7 @@
 //!         .with_trace_config(
 //!             trace::config()
 //!                 .with_sampler(Sampler::AlwaysOn)
-//!                 .with_id_generator(IdGenerator::default())
+//!                 .with_id_generator(RandomIdGenerator::default())
 //!                 .with_max_events_per_span(64)
 //!                 .with_max_attributes_per_span(16)
 //!                 .with_max_events_per_span(16)
@@ -173,7 +173,11 @@
     unused
 )]
 #![allow(elided_lifetimes_in_paths)]
-#![cfg_attr(docsrs, feature(doc_cfg), deny(rustdoc::broken_intra_doc_links))]
+#![cfg_attr(
+    docsrs,
+    feature(doc_cfg, doc_auto_cfg),
+    deny(rustdoc::broken_intra_doc_links)
+)]
 #![cfg_attr(test, deny(warnings))]
 
 mod exporter;
@@ -185,16 +189,22 @@ mod transform;
 
 pub use crate::exporter::ExportConfig;
 #[cfg(feature = "trace")]
-pub use crate::span::{OtlpTracePipeline, SpanExporter, SpanExporterBuilder};
+pub use crate::span::{
+    OtlpTracePipeline, SpanExporter, SpanExporterBuilder, OTEL_EXPORTER_OTLP_TRACES_ENDPOINT,
+    OTEL_EXPORTER_OTLP_TRACES_TIMEOUT,
+};
 
 #[cfg(feature = "metrics")]
-pub use crate::metric::{MetricsExporter, OtlpMetricPipeline};
+pub use crate::metric::{
+    MetricsExporter, MetricsExporterBuilder, OtlpMetricPipeline,
+    OTEL_EXPORTER_OTLP_METRICS_ENDPOINT, OTEL_EXPORTER_OTLP_METRICS_TIMEOUT,
+};
 
 pub use crate::exporter::{
     HasExportConfig, WithExportConfig, OTEL_EXPORTER_OTLP_ENDPOINT,
-    OTEL_EXPORTER_OTLP_ENDPOINT_DEFAULT, OTEL_EXPORTER_OTLP_TIMEOUT,
-    OTEL_EXPORTER_OTLP_TIMEOUT_DEFAULT, OTEL_EXPORTER_OTLP_TRACES_ENDPOINT,
-    OTEL_EXPORTER_OTLP_TRACES_TIMEOUT,
+    OTEL_EXPORTER_OTLP_ENDPOINT_DEFAULT, OTEL_EXPORTER_OTLP_PROTOCOL,
+    OTEL_EXPORTER_OTLP_PROTOCOL_DEFAULT, OTEL_EXPORTER_OTLP_TIMEOUT,
+    OTEL_EXPORTER_OTLP_TIMEOUT_DEFAULT,
 };
 
 use opentelemetry::sdk::export::ExportError;
@@ -359,7 +369,7 @@ impl ExportError for Error {
 
 /// The communication protocol to use when exporting data.
 #[cfg_attr(feature = "serialize", derive(Deserialize, Serialize))]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Protocol {
     /// GRPC protocol
     Grpc,

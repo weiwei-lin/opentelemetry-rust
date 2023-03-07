@@ -9,26 +9,24 @@ use async_channel::Receiver;
 
 use futures_util::StreamExt as _;
 
-use opentelemetry::trace::StatusCode;
+use opentelemetry::trace::Status;
 
 use crate::trace::{TracezError, TracezMessage, TracezQuery, TracezResponse};
 use crate::SpanQueue;
 use opentelemetry::sdk::export::trace::SpanData;
 use opentelemetry_proto::grpcio::tracez::TracezCounts;
 
-lazy_static! {
-    static ref LATENCY_BUCKET: [Duration; 9] = [
-        Duration::from_micros(0),
-        Duration::from_micros(10),
-        Duration::from_micros(100),
-        Duration::from_millis(1),
-        Duration::from_millis(10),
-        Duration::from_millis(100),
-        Duration::from_secs(1),
-        Duration::from_secs(10),
-        Duration::from_secs(100),
-    ];
-}
+const LATENCY_BUCKET: [Duration; 9] = [
+    Duration::from_micros(0),
+    Duration::from_micros(10),
+    Duration::from_micros(100),
+    Duration::from_millis(1),
+    Duration::from_millis(10),
+    Duration::from_millis(100),
+    Duration::from_secs(1),
+    Duration::from_secs(10),
+    Duration::from_secs(100),
+];
 const LATENCY_BUCKET_COUNT: usize = 9;
 
 /// Aggregate span information from `ZPagesSpanProcessor` and feed that information to server when
@@ -74,7 +72,7 @@ impl SpanAggregator {
 
                             summary.running.remove(span.span_context.clone());
 
-                            if span.status_code == StatusCode::Error {
+                            if matches!(span.status, Status::Error { .. }) {
                                 summary.error.push_back(span);
                             } else {
                                 let latency_idx = latency_bucket(span.start_time, span.end_time);
@@ -166,9 +164,9 @@ fn latency_bucket(start_time: SystemTime, end_time: SystemTime) -> usize {
         - start_time
             .duration_since(UNIX_EPOCH)
             .unwrap_or_else(|_| Duration::from_millis(0));
-    for idx in 1..LATENCY_BUCKET.len() {
-        if LATENCY_BUCKET[idx] > latency {
-            return (idx - 1) as usize;
+    for (idx, lower) in LATENCY_BUCKET.iter().copied().enumerate().skip(1) {
+        if lower > latency {
+            return idx - 1;
         }
     }
     LATENCY_BUCKET.len() - 1
@@ -201,7 +199,7 @@ impl<T: From<SpanData>> From<SpanQueue> for Vec<T> {
 mod tests {
     use std::time::{Duration, SystemTime};
 
-    use opentelemetry::trace::{SpanContext, SpanId, StatusCode, TraceFlags, TraceId, TraceState};
+    use opentelemetry::trace::{SpanContext, SpanId, Status, TraceFlags, TraceId, TraceState};
 
     use crate::trace::aggregator::{SpanAggregator, LATENCY_BUCKET_COUNT};
     use crate::trace::span_queue::SpanQueue;
@@ -292,11 +290,11 @@ mod tests {
             TraceState::default(),
         );
         span_data.name = Cow::from("test-service");
-        span_data.status_code = {
+        span_data.status = {
             if is_error {
-                StatusCode::Error
+                Status::error("")
             } else {
-                StatusCode::Ok
+                Status::Ok
             }
         };
         span_data
@@ -380,7 +378,7 @@ mod tests {
                         .iter()
                         .any(|expected_span| collected_span.span_context
                             == expected_span.span_context
-                            && collected_span.status_code == expected_span.status_code),
+                            && collected_span.status == expected_span.status),
                     "{}",
                     msg
                 )

@@ -1,16 +1,16 @@
-//! This should show how to connect to a third party collector like
+//! This shows how to connect to a third party collector like
 //! honeycomb or lightstep using tonic with tls and using tokio as reactor.
-//! To run this you have to specify a few environment variables like in the example:
+//! To run this specify a few environment variables like in the example:
 //! ```shell
 //! OTLP_TONIC_ENDPOINT=https://api.honeycomb.io:443 \
 //! OTLP_TONIC_X_HONEYCOMB_TEAM=token \
-//! OTLP_TONIC_X_HONEYCOMB_DATASET=dataset \'
+//! OTLP_TONIC_X_HONEYCOMB_DATASET=dataset \
 //! cargo run --bin external-otlp-tonic-tokio
 //! ```
-use opentelemetry::trace::TraceError;
-use opentelemetry::{global, sdk::trace as sdktrace};
 use opentelemetry::{
-    trace::{TraceContextExt, Tracer},
+    global::{shutdown_tracer_provider, tracer},
+    sdk::trace as sdktrace,
+    trace::{TraceContextExt, TraceError, Tracer},
     Key,
 };
 use tonic::{
@@ -19,12 +19,12 @@ use tonic::{
 };
 use url::Url;
 
-use opentelemetry::global::shutdown_tracer_provider;
 use opentelemetry_otlp::WithExportConfig;
-use std::{env::vars, str::FromStr, time::Duration};
 use std::{
-    env::{remove_var, var},
+    env::{remove_var, set_var, var, vars},
     error::Error,
+    str::FromStr,
+    time::Duration,
 };
 
 // Use the variables to try and export the example to any external collector that accepts otlp
@@ -34,20 +34,18 @@ const HEADER_PREFIX: &str = "OTLP_TONIC_";
 
 fn init_tracer() -> Result<sdktrace::Tracer, TraceError> {
     let endpoint = var(ENDPOINT).unwrap_or_else(|_| {
-        panic!(
-            "You must specify and endpoint to connect to with the variable {:?}.",
-            ENDPOINT
-        )
+        panic!("You must specify and endpoint to connect to with the variable {ENDPOINT:?}.",)
     });
     let endpoint = Url::parse(&endpoint).expect("endpoint is not a valid url");
     remove_var(ENDPOINT);
+
     let mut metadata = MetadataMap::new();
     for (key, value) in vars()
         .filter(|(name, _)| name.starts_with(HEADER_PREFIX))
         .map(|(name, value)| {
             let header_name = name
                 .strip_prefix(HEADER_PREFIX)
-                .map(|h| h.replace("_", "-"))
+                .map(|h| h.replace('_', "-"))
                 .map(|h| h.to_ascii_lowercase())
                 .unwrap();
             (header_name, value)
@@ -62,7 +60,7 @@ fn init_tracer() -> Result<sdktrace::Tracer, TraceError> {
             opentelemetry_otlp::new_exporter()
                 .tonic()
                 .with_endpoint(endpoint.as_str())
-                .with_metadata(dbg!(metadata))
+                .with_metadata(metadata)
                 .with_tls_config(
                     ClientTlsConfig::new().domain_name(
                         endpoint
@@ -79,9 +77,13 @@ const ANOTHER_KEY: Key = Key::from_static_str("ex.com/another");
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+    if let Err(std::env::VarError::NotPresent) = var("RUST_LOG") {
+        set_var("RUST_LOG", "debug")
+    };
+    env_logger::init();
     let _ = init_tracer()?;
 
-    let tracer = global::tracer("ex.com/basic");
+    let tracer = tracer("ex.com/basic");
 
     tracer.in_span("operation", |cx| {
         let span = cx.span();
@@ -95,7 +97,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
             let span = cx.span();
             span.set_attribute(LEMONS_KEY.string("five"));
 
-            span.add_event("Sub span event".to_string(), vec![]);
+            span.add_event("Sub span event", vec![]);
         });
     });
 

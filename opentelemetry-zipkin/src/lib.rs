@@ -3,7 +3,7 @@
 //! Collects OpenTelemetry spans and reports them to a given Zipkin collector
 //! endpoint. See the [Zipkin Docs] for details and deployment information.
 //!
-//! *Compiler support: [requires `rustc` 1.46+][msrv]*
+//! *Compiler support: [requires `rustc` 1.57+][msrv]*
 //!
 //! [Zipkin Docs]: https://zipkin.io/
 //! [msrv]: #supported-rust-versions
@@ -88,7 +88,7 @@
 //!
 //! ```no_run
 //! use opentelemetry::{KeyValue, trace::Tracer};
-//! use opentelemetry::sdk::{trace::{self, IdGenerator, Sampler}, Resource};
+//! use opentelemetry::sdk::{trace::{self, RandomIdGenerator, Sampler}, Resource};
 //! use opentelemetry::sdk::export::trace::ExportResult;
 //! use opentelemetry::global;
 //! use opentelemetry_http::{HttpClient, HttpError};
@@ -98,38 +98,46 @@
 //! use http::{Request, Response};
 //! use std::convert::TryInto as _;
 //! use std::error::Error;
+//! use hyper::{client::HttpConnector, Body};
 //!
 //! // `reqwest` and `surf` are supported through features, if you prefer an
 //! // alternate http client you can add support by implementing `HttpClient` as
 //! // shown here.
 //! #[derive(Debug)]
-//! struct IsahcClient(isahc::HttpClient);
+//! struct HyperClient(hyper::Client<HttpConnector, Body>);
 //!
 //! #[async_trait]
-//! impl HttpClient for IsahcClient {
-//!     async fn send(&self, request: Request<Vec<u8>>) -> Result<Response<Bytes>, HttpError> {
-//!         let mut response = self.0.send_async(request).await?;
-//!         let status = response.status();
-//!         let mut bytes = Vec::with_capacity(response.body().len().unwrap_or(0).try_into()?);
-//!         isahc::AsyncReadResponseExt::copy_to(&mut response, &mut bytes).await?;
+//! impl HttpClient for HyperClient {
+//!     async fn send(&self, req: Request<Vec<u8>>) -> Result<Response<Bytes>, HttpError> {
+//!         let resp = self
+//!             .0
+//!             .request(req.map(|v| Body::from(v)))
+//!             .await?;
 //!
-//!         Ok(Response::builder()
-//!             .status(response.status())
-//!             .body(bytes.into())?)
+//!         let response = Response::builder()
+//!             .status(resp.status())
+//!             .body({
+//!                 hyper::body::to_bytes(resp.into_body())
+//!                     .await
+//!                     .expect("cannot decode response")
+//!             })
+//!             .expect("cannot build response");
+//!
+//!         Ok(response)
 //!     }
 //! }
 //!
 //! fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
 //!     global::set_text_map_propagator(opentelemetry_zipkin::Propagator::new());
 //!     let tracer = opentelemetry_zipkin::new_pipeline()
-//!         .with_http_client(IsahcClient(isahc::HttpClient::new()?))
+//!         .with_http_client(HyperClient(hyper::Client::new()))
 //!         .with_service_name("my_app")
 //!         .with_service_address("127.0.0.1:8080".parse()?)
 //!         .with_collector_endpoint("http://localhost:9411/api/v2/spans")
 //!         .with_trace_config(
 //!             trace::config()
 //!                 .with_sampler(Sampler::AlwaysOn)
-//!                 .with_id_generator(IdGenerator::default())
+//!                 .with_id_generator(RandomIdGenerator::default())
 //!                 .with_max_events_per_span(64)
 //!                 .with_max_attributes_per_span(16)
 //!                 .with_max_events_per_span(16)
@@ -159,7 +167,7 @@
 //! ## Supported Rust Versions
 //!
 //! OpenTelemetry is built against the latest stable release. The minimum
-//! supported version is 1.46. The current OpenTelemetry version is not
+//! supported version is 1.57. The current OpenTelemetry version is not
 //! guaranteed to build on Rust versions earlier than the minimum supported
 //! version.
 //!
@@ -178,7 +186,11 @@
     unreachable_pub,
     unused
 )]
-#![cfg_attr(docsrs, feature(doc_cfg), deny(rustdoc::broken_intra_doc_links))]
+#![cfg_attr(
+    docsrs,
+    feature(doc_cfg, doc_auto_cfg),
+    deny(rustdoc::broken_intra_doc_links)
+)]
 #![doc(
     html_logo_url = "https://raw.githubusercontent.com/open-telemetry/opentelemetry-rust/main/assets/logo.svg"
 )]

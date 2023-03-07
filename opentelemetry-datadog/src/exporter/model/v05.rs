@@ -1,9 +1,13 @@
 use crate::exporter::intern::StringInterner;
-use crate::exporter::Error;
+use crate::exporter::model::SAMPLING_PRIORITY_KEY;
+use crate::exporter::{Error, ModelConfig};
 use opentelemetry::sdk::export::trace;
-use opentelemetry::trace::StatusCode;
+use opentelemetry::sdk::export::trace::SpanData;
+use opentelemetry::trace::Status;
 use opentelemetry::{Key, Value};
 use std::time::SystemTime;
+
+use super::unified_tags::{UnifiedTagField, UnifiedTags};
 
 // Protocol documentation sourced from https://github.com/DataDog/datadog-agent/blob/c076ea9a1ffbde4c76d35343dbc32aecbbf99cb9/pkg/trace/api/version.go
 //
@@ -50,17 +54,34 @@ use std::time::SystemTime;
 //
 // 		The dictionary in this case would be []string{""}, having only the empty string at index 0.
 //
-pub(crate) fn encode(
-    service_name: &str,
+pub(crate) fn encode<S, N, R>(
+    model_config: &ModelConfig,
     traces: Vec<Vec<trace::SpanData>>,
-) -> Result<Vec<u8>, Error> {
+    get_service_name: S,
+    get_name: N,
+    get_resource: R,
+    unified_tags: &UnifiedTags,
+) -> Result<Vec<u8>, Error>
+where
+    for<'a> S: Fn(&'a SpanData, &'a ModelConfig) -> &'a str,
+    for<'a> N: Fn(&'a SpanData, &'a ModelConfig) -> &'a str,
+    for<'a> R: Fn(&'a SpanData, &'a ModelConfig) -> &'a str,
+{
     let mut interner = StringInterner::new();
-    let mut encoded_traces = encode_traces(&mut interner, service_name, traces)?;
+    let mut encoded_traces = encode_traces(
+        &mut interner,
+        model_config,
+        get_service_name,
+        get_name,
+        get_resource,
+        traces,
+        unified_tags,
+    )?;
 
     let mut payload = Vec::new();
     rmp::encode::write_array_len(&mut payload, 2)?;
 
-    rmp::encode::write_array_len(&mut payload, interner.len() as u32)?;
+    rmp::encode::write_array_len(&mut payload, interner.len())?;
     for data in interner.iter() {
         rmp::encode::write_str(&mut payload, data)?;
     }
@@ -70,15 +91,45 @@ pub(crate) fn encode(
     Ok(payload)
 }
 
-fn encode_traces(
+fn write_unified_tags(
+    encoded: &mut Vec<u8>,
     interner: &mut StringInterner,
-    service_name: &str,
+    unified_tags: &UnifiedTags,
+) -> Result<(), Error> {
+    write_unified_tag(encoded, interner, &unified_tags.service)?;
+    write_unified_tag(encoded, interner, &unified_tags.env)?;
+    write_unified_tag(encoded, interner, &unified_tags.version)?;
+    Ok(())
+}
+
+fn write_unified_tag(
+    encoded: &mut Vec<u8>,
+    interner: &mut StringInterner,
+    tag: &UnifiedTagField,
+) -> Result<(), Error> {
+    if let Some(tag_value) = &tag.value {
+        rmp::encode::write_u32(encoded, interner.intern(tag.get_tag_name()))?;
+        rmp::encode::write_u32(encoded, interner.intern(tag_value.as_str().as_ref()))?;
+    }
+    Ok(())
+}
+
+fn encode_traces<S, N, R>(
+    interner: &mut StringInterner,
+    model_config: &ModelConfig,
+    get_service_name: S,
+    get_name: N,
+    get_resource: R,
     traces: Vec<Vec<trace::SpanData>>,
-) -> Result<Vec<u8>, Error> {
+    unified_tags: &UnifiedTags,
+) -> Result<Vec<u8>, Error>
+where
+    for<'a> S: Fn(&'a SpanData, &'a ModelConfig) -> &'a str,
+    for<'a> N: Fn(&'a SpanData, &'a ModelConfig) -> &'a str,
+    for<'a> R: Fn(&'a SpanData, &'a ModelConfig) -> &'a str,
+{
     let mut encoded = Vec::new();
     rmp::encode::write_array_len(&mut encoded, traces.len() as u32)?;
-
-    let service_interned = interner.intern(service_name);
 
     for trace in traces.into_iter() {
         rmp::encode::write_array_len(&mut encoded, trace.len() as u32)?;
@@ -98,18 +149,21 @@ fn encode_traces(
                 .unwrap_or(0);
 
             let span_type = match span.attributes.get(&Key::new("span.type")) {
-                Some(Value::String(s)) => interner.intern(s.as_ref()),
+                Some(Value::String(s)) => interner.intern(s.as_str()),
                 _ => interner.intern(""),
             };
 
             // Datadog span name is OpenTelemetry component name - see module docs for more information
-            rmp::encode::write_array_len(&mut encoded, 12)?;
-            rmp::encode::write_u32(&mut encoded, service_interned)?;
+            rmp::encode::write_array_len(&mut encoded, 13)?;
             rmp::encode::write_u32(
                 &mut encoded,
-                interner.intern(span.instrumentation_lib.name.as_ref()),
+                interner.intern(get_service_name(&span, model_config)),
             )?;
-            rmp::encode::write_u32(&mut encoded, interner.intern(&span.name))?;
+            rmp::encode::write_u32(&mut encoded, interner.intern(get_name(&span, model_config)))?;
+            rmp::encode::write_u32(
+                &mut encoded,
+                interner.intern(get_resource(&span, model_config)),
+            )?;
             rmp::encode::write_u64(
                 &mut encoded,
                 u128::from_be_bytes(span.span_context.trace_id().to_bytes()) as u64,
@@ -126,17 +180,37 @@ fn encode_traces(
             rmp::encode::write_i64(&mut encoded, duration)?;
             rmp::encode::write_i32(
                 &mut encoded,
-                match span.status_code {
-                    StatusCode::Error => 1,
+                match span.status {
+                    Status::Error { .. } => 1,
                     _ => 0,
                 },
             )?;
-            rmp::encode::write_map_len(&mut encoded, span.attributes.len() as u32)?;
+            rmp::encode::write_map_len(
+                &mut encoded,
+                (span.attributes.len() + span.resource.len()) as u32
+                    + unified_tags.compute_attribute_size(),
+            )?;
+            for (key, value) in span.resource.iter() {
+                rmp::encode::write_u32(&mut encoded, interner.intern(key.as_str()))?;
+                rmp::encode::write_u32(&mut encoded, interner.intern(value.as_str().as_ref()))?;
+            }
+
+            write_unified_tags(&mut encoded, interner, unified_tags)?;
+
             for (key, value) in span.attributes.iter() {
                 rmp::encode::write_u32(&mut encoded, interner.intern(key.as_str()))?;
                 rmp::encode::write_u32(&mut encoded, interner.intern(value.as_str().as_ref()))?;
             }
-            rmp::encode::write_map_len(&mut encoded, 0)?;
+            rmp::encode::write_map_len(&mut encoded, 1)?;
+            rmp::encode::write_u32(&mut encoded, interner.intern(SAMPLING_PRIORITY_KEY))?;
+            rmp::encode::write_f64(
+                &mut encoded,
+                if span.span_context.is_sampled() {
+                    1.0
+                } else {
+                    0.0
+                },
+            )?;
             rmp::encode::write_u32(&mut encoded, span_type)?;
         }
     }

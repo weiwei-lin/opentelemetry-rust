@@ -29,7 +29,9 @@
 //! Datadog additionally has a span_type string that alters the rendering of the spans in the web UI.
 //! This can be set as the `span.type` OpenTelemetry span attribute.
 //!
-//! For standard values see [here](https://github.com/DataDog/dd-trace-go/blob/ecb0b805ef25b00888a2fb62d465a5aa95e7301e/ddtrace/ext/app_types.go#L31)
+//! For standard values see [here](https://github.com/DataDog/dd-trace-go/blob/ecb0b805ef25b00888a2fb62d465a5aa95e7301e/ddtrace/ext/app_types.go#L31).
+//!
+//! If the default mapping is not fit for your use case, you may change some of them by providing [`FieldMappingFn`]s in pipeline.
 //!
 //! ## Performance
 //!
@@ -79,7 +81,7 @@
 //!
 //! ```no_run
 //! use opentelemetry::{KeyValue, trace::Tracer};
-//! use opentelemetry::sdk::{trace::{self, IdGenerator, Sampler}, Resource};
+//! use opentelemetry::sdk::{trace::{self, RandomIdGenerator, Sampler}, Resource};
 //! use opentelemetry::sdk::export::trace::ExportResult;
 //! use opentelemetry::global::shutdown_tracer_provider;
 //! use opentelemetry_datadog::{new_pipeline, ApiVersion, Error};
@@ -113,12 +115,12 @@
 //! fn main() -> Result<(), opentelemetry::trace::TraceError> {
 //!     let tracer = new_pipeline()
 //!         .with_service_name("my_app")
-//!         .with_version(ApiVersion::Version05)
+//!         .with_api_version(ApiVersion::Version05)
 //!         .with_agent_endpoint("http://localhost:8126")
 //!         .with_trace_config(
 //!             trace::config()
 //!                 .with_sampler(Sampler::AlwaysOn)
-//!                 .with_id_generator(IdGenerator::default())
+//!                 .with_id_generator(RandomIdGenerator::default())
 //!         )
 //!         .install_batch(opentelemetry::runtime::Tokio)?;
 //!
@@ -135,6 +137,7 @@
 mod exporter;
 
 mod propagator {
+    use once_cell::sync::Lazy;
     use opentelemetry::{
         propagation::{text_map_propagator::FieldIter, Extractor, Injector, TextMapPropagator},
         trace::{SpanContext, SpanId, TraceContextExt, TraceFlags, TraceId, TraceState},
@@ -147,13 +150,13 @@ mod propagator {
 
     const TRACE_FLAG_DEFERRED: TraceFlags = TraceFlags::new(0x02);
 
-    lazy_static::lazy_static! {
-        static ref DATADOG_HEADER_FIELDS: [String; 3] = [
+    static DATADOG_HEADER_FIELDS: Lazy<[String; 3]> = Lazy::new(|| {
+        [
             DATADOG_TRACE_ID_HEADER.to_string(),
             DATADOG_PARENT_ID_HEADER.to_string(),
             DATADOG_SAMPLING_PRIORITY_HEADER.to_string(),
-        ];
-    }
+        ]
+    });
 
     enum SamplingPriority {
         UserReject = -1,
@@ -385,5 +388,8 @@ mod propagator {
     }
 }
 
-pub use exporter::{new_pipeline, ApiVersion, DatadogExporter, DatadogPipelineBuilder, Error};
+pub use exporter::{
+    new_pipeline, ApiVersion, DatadogExporter, DatadogPipelineBuilder, Error, FieldMappingFn,
+    ModelConfig,
+};
 pub use propagator::DatadogPropagator;

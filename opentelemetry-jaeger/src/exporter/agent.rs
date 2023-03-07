@@ -1,4 +1,5 @@
 //! # UDP Jaeger Agent Client
+use crate::exporter::addrs_and_family;
 use crate::exporter::runtime::JaegerTraceRuntime;
 use crate::exporter::thrift::{
     agent::{self, TAgentSyncClient},
@@ -11,9 +12,6 @@ use thrift::{
     protocol::{TCompactInputProtocol, TCompactOutputProtocol},
     transport::{ReadHalf, TIoChannel, WriteHalf},
 };
-
-/// The max size of UDP packet we want to send, synced with jaeger-agent
-const UDP_PACKET_MAX_LENGTH: usize = 65_000;
 
 struct BufferClient {
     buffer: ReadHalf<TBufferChannel>,
@@ -46,19 +44,19 @@ pub(crate) struct AgentSyncClientUdp {
 impl AgentSyncClientUdp {
     /// Create a new UDP agent client
     pub(crate) fn new<T: ToSocketAddrs>(
-        host_port: T,
-        max_packet_size: Option<usize>,
+        agent_endpoint: T,
+        max_packet_size: usize,
         auto_split: bool,
     ) -> thrift::Result<Self> {
-        let max_packet_size = max_packet_size.unwrap_or(UDP_PACKET_MAX_LENGTH);
         let (buffer, write) = TBufferChannel::with_capacity(max_packet_size).split()?;
         let client = agent::AgentSyncClient::new(
             TCompactInputProtocol::new(TNoopChannel),
             TCompactOutputProtocol::new(write),
         );
 
-        let conn = UdpSocket::bind("0.0.0.0:0")?;
-        conn.connect(host_port)?;
+        let (addrs, family) = addrs_and_family(&agent_endpoint)?;
+        let conn = UdpSocket::bind(family)?;
+        conn.connect(addrs.as_slice())?;
 
         Ok(AgentSyncClientUdp {
             conn,
@@ -105,19 +103,18 @@ pub(crate) struct AgentAsyncClientUdp<R: JaegerTraceRuntime> {
 impl<R: JaegerTraceRuntime> AgentAsyncClientUdp<R> {
     /// Create a new UDP agent client
     pub(crate) fn new<T: ToSocketAddrs>(
-        host_port: T,
-        max_packet_size: Option<usize>,
+        agent_endpoint: T,
+        max_packet_size: usize,
         runtime: R,
         auto_split: bool,
     ) -> thrift::Result<Self> {
-        let max_packet_size = max_packet_size.unwrap_or(UDP_PACKET_MAX_LENGTH);
         let (buffer, write) = TBufferChannel::with_capacity(max_packet_size).split()?;
         let client = agent::AgentSyncClient::new(
             TCompactInputProtocol::new(TNoopChannel),
             TCompactOutputProtocol::new(write),
         );
 
-        let conn = runtime.create_socket(host_port)?;
+        let conn = runtime.create_socket(agent_endpoint)?;
 
         Ok(AgentAsyncClientUdp {
             runtime,

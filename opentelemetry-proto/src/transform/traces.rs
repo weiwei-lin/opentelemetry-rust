@@ -1,6 +1,6 @@
 use crate::transform::common::to_nanos;
 use opentelemetry::sdk::{self, export::trace::SpanData};
-use opentelemetry::trace::{Link, SpanId, SpanKind, StatusCode};
+use opentelemetry::trace::{Link, SpanId, SpanKind};
 
 #[cfg(feature = "gen-tonic")]
 pub mod tonic {
@@ -10,6 +10,7 @@ pub mod tonic {
         span, status, InstrumentationLibrarySpans, ResourceSpans, Span, Status,
     };
     use crate::transform::common::tonic::Attributes;
+    use opentelemetry::trace;
 
     impl From<SpanKind> for span::SpanKind {
         fn from(span_kind: SpanKind) -> Self {
@@ -23,12 +24,12 @@ pub mod tonic {
         }
     }
 
-    impl From<StatusCode> for status::StatusCode {
-        fn from(status_code: StatusCode) -> Self {
-            match status_code {
-                StatusCode::Ok => status::StatusCode::Ok,
-                StatusCode::Unset => status::StatusCode::Unset,
-                StatusCode::Error => status::StatusCode::Error,
+    impl From<&trace::Status> for status::StatusCode {
+        fn from(status: &trace::Status) -> Self {
+            match status {
+                trace::Status::Ok => status::StatusCode::Ok,
+                trace::Status::Unset => status::StatusCode::Unset,
+                trace::Status::Error { .. } => status::StatusCode::Error,
             }
         }
     }
@@ -36,11 +37,11 @@ pub mod tonic {
     impl From<Link> for span::Link {
         fn from(link: Link) -> Self {
             span::Link {
-                trace_id: link.span_context().trace_id().to_bytes().to_vec(),
-                span_id: link.span_context().span_id().to_bytes().to_vec(),
-                trace_state: link.span_context().trace_state().header(),
-                attributes: Attributes::from(link.attributes().clone()).0,
-                dropped_attributes_count: link.dropped_attributes_count(),
+                trace_id: link.span_context.trace_id().to_bytes().to_vec(),
+                span_id: link.span_context.span_id().to_bytes().to_vec(),
+                trace_state: link.span_context.trace_state().header(),
+                attributes: Attributes::from(link.attributes).0,
+                dropped_attributes_count: link.dropped_attributes_count,
             }
         }
     }
@@ -50,16 +51,22 @@ pub mod tonic {
             let span_kind: span::SpanKind = source_span.span_kind.into();
             ResourceSpans {
                 resource: Some(Resource {
-                    attributes: resource_attributes(
-                        source_span.resource.as_ref().map(AsRef::as_ref),
-                    )
-                    .0,
+                    attributes: resource_attributes(&source_span.resource).0,
                     dropped_attributes_count: 0,
                 }),
-                schema_url: "".to_string(), // todo: replace with actual schema url.
+                schema_url: source_span
+                    .resource
+                    .schema_url()
+                    .map(|url| url.to_string())
+                    .unwrap_or_default(),
                 instrumentation_library_spans: vec![InstrumentationLibrarySpans {
-                    instrumentation_library: Default::default(),
-                    schema_url: "".to_string(), // todo: replace with actual schema url.
+                    schema_url: source_span
+                        .instrumentation_lib
+                        .schema_url
+                        .as_ref()
+                        .map(ToString::to_string)
+                        .unwrap_or_default(),
+                    instrumentation_library: Some(source_span.instrumentation_lib.into()),
                     spans: vec![Span {
                         trace_id: source_span.span_context.trace_id().to_bytes().to_vec(),
                         span_id: source_span.span_context.span_id().to_bytes().to_vec(),
@@ -91,9 +98,11 @@ pub mod tonic {
                         dropped_links_count: source_span.links.dropped_count(),
                         links: source_span.links.into_iter().map(Into::into).collect(),
                         status: Some(Status {
-                            code: status::StatusCode::from(source_span.status_code).into(),
-                            message: source_span.status_message.into_owned(),
-                            ..Default::default()
+                            code: status::StatusCode::from(&source_span.status).into(),
+                            message: match source_span.status {
+                                trace::Status::Error { description } => description.to_string(),
+                                _ => Default::default(),
+                            },
                         }),
                     }],
                 }],
@@ -101,14 +110,11 @@ pub mod tonic {
         }
     }
 
-    fn resource_attributes(resource: Option<&sdk::Resource>) -> Attributes {
+    fn resource_attributes(resource: &sdk::Resource) -> Attributes {
         resource
-            .map(|res| {
-                res.iter()
-                    .map(|(k, v)| opentelemetry::KeyValue::new(k.clone(), v.clone()))
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default()
+            .iter()
+            .map(|(k, v)| opentelemetry::KeyValue::new(k.clone(), v.clone()))
+            .collect::<Vec<_>>()
             .into()
     }
 }
@@ -122,6 +128,7 @@ pub mod grpcio {
         Status, Status_StatusCode,
     };
     use crate::transform::common::grpcio::Attributes;
+    use opentelemetry::trace;
     use protobuf::{RepeatedField, SingularPtrField};
 
     impl From<SpanKind> for Span_SpanKind {
@@ -136,12 +143,12 @@ pub mod grpcio {
         }
     }
 
-    impl From<StatusCode> for Status_StatusCode {
-        fn from(status_code: StatusCode) -> Self {
-            match status_code {
-                StatusCode::Ok => Status_StatusCode::STATUS_CODE_OK,
-                StatusCode::Unset => Status_StatusCode::STATUS_CODE_UNSET,
-                StatusCode::Error => Status_StatusCode::STATUS_CODE_ERROR,
+    impl From<&trace::Status> for Status_StatusCode {
+        fn from(status: &trace::Status) -> Self {
+            match status {
+                trace::Status::Ok => Status_StatusCode::STATUS_CODE_OK,
+                trace::Status::Unset => Status_StatusCode::STATUS_CODE_UNSET,
+                trace::Status::Error { .. } => Status_StatusCode::STATUS_CODE_ERROR,
             }
         }
     }
@@ -149,11 +156,11 @@ pub mod grpcio {
     impl From<Link> for Span_Link {
         fn from(link: Link) -> Self {
             Span_Link {
-                trace_id: link.span_context().trace_id().to_bytes().to_vec(),
-                span_id: link.span_context().span_id().to_bytes().to_vec(),
-                trace_state: link.span_context().trace_state().header(),
-                attributes: Attributes::from(link.attributes().clone()).0,
-                dropped_attributes_count: link.dropped_attributes_count(),
+                trace_id: link.span_context.trace_id().to_bytes().to_vec(),
+                span_id: link.span_context.span_id().to_bytes().to_vec(),
+                trace_state: link.span_context.trace_state().header(),
+                attributes: Attributes::from(link.attributes).0,
+                dropped_attributes_count: link.dropped_attributes_count,
                 ..Default::default()
             }
         }
@@ -163,16 +170,21 @@ pub mod grpcio {
         fn from(source_span: SpanData) -> Self {
             ResourceSpans {
                 resource: SingularPtrField::from(Some(Resource {
-                    attributes: resource_attributes(
-                        source_span.resource.as_ref().map(AsRef::as_ref),
-                    )
-                    .0,
+                    attributes: resource_attributes(&source_span.resource).0,
                     dropped_attributes_count: 0,
                     ..Default::default()
                 })),
                 instrumentation_library_spans: RepeatedField::from_vec(vec![
                     InstrumentationLibrarySpans {
-                        instrumentation_library: Default::default(),
+                        schema_url: source_span
+                            .instrumentation_lib
+                            .schema_url
+                            .as_ref()
+                            .map(ToString::to_string)
+                            .unwrap_or_default(),
+                        instrumentation_library: protobuf::SingularPtrField::some(
+                            source_span.instrumentation_lib.into(),
+                        ),
                         spans: RepeatedField::from_vec(vec![Span {
                             trace_id: source_span.span_context.trace_id().to_bytes().to_vec(),
                             span_id: source_span.span_context.span_id().to_bytes().to_vec(),
@@ -209,8 +221,11 @@ pub mod grpcio {
                                 source_span.links.into_iter().map(Into::into).collect(),
                             ),
                             status: SingularPtrField::some(Status {
-                                code: Status_StatusCode::from(source_span.status_code),
-                                message: source_span.status_message.into_owned(),
+                                code: Status_StatusCode::from(&source_span.status),
+                                message: match source_span.status {
+                                    trace::Status::Error { description } => description.to_string(),
+                                    _ => Default::default(),
+                                },
                                 ..Default::default()
                             }),
                             ..Default::default()
@@ -223,15 +238,11 @@ pub mod grpcio {
         }
     }
 
-    fn resource_attributes(resource: Option<&sdk::Resource>) -> Attributes {
+    fn resource_attributes(resource: &sdk::Resource) -> Attributes {
         resource
-            .map(|resource| {
-                resource
-                    .iter()
-                    .map(|(k, v)| opentelemetry::KeyValue::new(k.clone(), v.clone()))
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default()
+            .iter()
+            .map(|(k, v)| opentelemetry::KeyValue::new(k.clone(), v.clone()))
+            .collect::<Vec<_>>()
             .into()
     }
 }

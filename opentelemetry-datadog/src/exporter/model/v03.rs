@@ -1,13 +1,23 @@
-use crate::exporter::model::Error;
+use crate::exporter::model::{Error, SAMPLING_PRIORITY_KEY};
+use crate::exporter::ModelConfig;
 use opentelemetry::sdk::export::trace;
-use opentelemetry::trace::StatusCode;
+use opentelemetry::sdk::export::trace::SpanData;
+use opentelemetry::trace::Status;
 use opentelemetry::{Key, Value};
 use std::time::SystemTime;
 
-pub(crate) fn encode(
-    service_name: &str,
+pub(crate) fn encode<S, N, R>(
+    model_config: &ModelConfig,
     traces: Vec<Vec<trace::SpanData>>,
-) -> Result<Vec<u8>, Error> {
+    get_service_name: S,
+    get_name: N,
+    get_resource: R,
+) -> Result<Vec<u8>, Error>
+where
+    for<'a> S: Fn(&'a SpanData, &'a ModelConfig) -> &'a str,
+    for<'a> N: Fn(&'a SpanData, &'a ModelConfig) -> &'a str,
+    for<'a> R: Fn(&'a SpanData, &'a ModelConfig) -> &'a str,
+{
     let mut encoded = Vec::new();
     rmp::encode::write_array_len(&mut encoded, traces.len() as u32)?;
 
@@ -29,22 +39,22 @@ pub(crate) fn encode(
                 .unwrap_or(0);
 
             if let Some(Value::String(s)) = span.attributes.get(&Key::new("span.type")) {
-                rmp::encode::write_map_len(&mut encoded, 11)?;
+                rmp::encode::write_map_len(&mut encoded, 12)?;
                 rmp::encode::write_str(&mut encoded, "type")?;
-                rmp::encode::write_str(&mut encoded, s.as_ref())?;
+                rmp::encode::write_str(&mut encoded, s.as_str())?;
             } else {
-                rmp::encode::write_map_len(&mut encoded, 10)?;
+                rmp::encode::write_map_len(&mut encoded, 11)?;
             }
 
             // Datadog span name is OpenTelemetry component name - see module docs for more information
             rmp::encode::write_str(&mut encoded, "service")?;
-            rmp::encode::write_str(&mut encoded, service_name)?;
+            rmp::encode::write_str(&mut encoded, get_service_name(&span, model_config))?;
 
             rmp::encode::write_str(&mut encoded, "name")?;
-            rmp::encode::write_str(&mut encoded, span.instrumentation_lib.name.as_ref())?;
+            rmp::encode::write_str(&mut encoded, get_name(&span, model_config))?;
 
             rmp::encode::write_str(&mut encoded, "resource")?;
-            rmp::encode::write_str(&mut encoded, &span.name)?;
+            rmp::encode::write_str(&mut encoded, get_resource(&span, model_config))?;
 
             rmp::encode::write_str(&mut encoded, "trace_id")?;
             rmp::encode::write_u64(
@@ -73,18 +83,37 @@ pub(crate) fn encode(
             rmp::encode::write_str(&mut encoded, "error")?;
             rmp::encode::write_i32(
                 &mut encoded,
-                match span.status_code {
-                    StatusCode::Error => 1,
+                match span.status {
+                    Status::Error { .. } => 1,
                     _ => 0,
                 },
             )?;
 
             rmp::encode::write_str(&mut encoded, "meta")?;
-            rmp::encode::write_map_len(&mut encoded, span.attributes.len() as u32)?;
+            rmp::encode::write_map_len(
+                &mut encoded,
+                (span.attributes.len() + span.resource.len()) as u32,
+            )?;
+            for (key, value) in span.resource.iter() {
+                rmp::encode::write_str(&mut encoded, key.as_str())?;
+                rmp::encode::write_str(&mut encoded, value.as_str().as_ref())?;
+            }
             for (key, value) in span.attributes.iter() {
                 rmp::encode::write_str(&mut encoded, key.as_str())?;
                 rmp::encode::write_str(&mut encoded, value.as_str().as_ref())?;
             }
+
+            rmp::encode::write_str(&mut encoded, "metrics")?;
+            rmp::encode::write_map_len(&mut encoded, 1)?;
+            rmp::encode::write_str(&mut encoded, SAMPLING_PRIORITY_KEY)?;
+            rmp::encode::write_f64(
+                &mut encoded,
+                if span.span_context.is_sampled() {
+                    1.0
+                } else {
+                    0.0
+                },
+            )?;
         }
     }
 

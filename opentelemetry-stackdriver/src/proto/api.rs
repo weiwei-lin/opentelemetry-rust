@@ -1,6 +1,7 @@
 /// Defines the HTTP configuration for an API service. It contains a list of
 /// \[HttpRule][google.api.HttpRule\], each specifying the mapping of an RPC method
 /// to one or more HTTP REST API methods.
+#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Http {
     /// A list of HTTP configuration rules that apply to individual API methods.
@@ -42,19 +43,19 @@ pub struct Http {
 ///
 /// Example:
 ///
-///     service Messaging {
-///       rpc GetMessage(GetMessageRequest) returns (Message) {
-///         option (google.api.http) = {
-///             get: "/v1/{name=messages/*}"
-///         };
-///       }
-///     }
-///     message GetMessageRequest {
-///       string name = 1; // Mapped to URL path.
-///     }
-///     message Message {
-///       string text = 1; // The resource content.
-///     }
+///      service Messaging {
+///        rpc GetMessage(GetMessageRequest) returns (Message) {
+///          option (google.api.http) = {
+///              get: "/v1/{name=messages/*}"
+///          };
+///        }
+///      }
+///      message GetMessageRequest {
+///        string name = 1; // Mapped to URL path.
+///      }
+///      message Message {
+///        string text = 1; // The resource content.
+///      }
 ///
 /// This enables an HTTP REST to gRPC mapping as below:
 ///
@@ -66,21 +67,21 @@ pub struct Http {
 /// automatically become HTTP query parameters if there is no HTTP request body.
 /// For example:
 ///
-///     service Messaging {
-///       rpc GetMessage(GetMessageRequest) returns (Message) {
-///         option (google.api.http) = {
-///             get:"/v1/messages/{message_id}"
-///         };
-///       }
-///     }
-///     message GetMessageRequest {
-///       message SubMessage {
-///         string subfield = 1;
-///       }
-///       string message_id = 1; // Mapped to URL path.
-///       int64 revision = 2;    // Mapped to URL query parameter `revision`.
-///       SubMessage sub = 3;    // Mapped to URL query parameter `sub.subfield`.
-///     }
+///      service Messaging {
+///        rpc GetMessage(GetMessageRequest) returns (Message) {
+///          option (google.api.http) = {
+///              get:"/v1/messages/{message_id}"
+///          };
+///        }
+///      }
+///      message GetMessageRequest {
+///        message SubMessage {
+///          string subfield = 1;
+///        }
+///        string message_id = 1; // Mapped to URL path.
+///        int64 revision = 2;    // Mapped to URL query parameter `revision`.
+///        SubMessage sub = 3;    // Mapped to URL query parameter `sub.subfield`.
+///      }
 ///
 /// This enables a HTTP JSON to RPC mapping as below:
 ///
@@ -101,18 +102,18 @@ pub struct Http {
 /// specifies the mapping. Consider a REST update method on the
 /// message resource collection:
 ///
-///     service Messaging {
-///       rpc UpdateMessage(UpdateMessageRequest) returns (Message) {
-///         option (google.api.http) = {
-///           patch: "/v1/messages/{message_id}"
-///           body: "message"
-///         };
-///       }
-///     }
-///     message UpdateMessageRequest {
-///       string message_id = 1; // mapped to the URL
-///       Message message = 2;   // mapped to the body
-///     }
+///      service Messaging {
+///        rpc UpdateMessage(UpdateMessageRequest) returns (Message) {
+///          option (google.api.http) = {
+///            patch: "/v1/messages/{message_id}"
+///            body: "message"
+///          };
+///        }
+///      }
+///      message UpdateMessageRequest {
+///        string message_id = 1; // mapped to the URL
+///        Message message = 2;   // mapped to the body
+///      }
 ///
 /// The following HTTP JSON to RPC mapping is enabled, where the
 /// representation of the JSON in the request body is determined by
@@ -128,18 +129,18 @@ pub struct Http {
 /// request body.  This enables the following alternative definition of
 /// the update method:
 ///
-///     service Messaging {
-///       rpc UpdateMessage(Message) returns (Message) {
-///         option (google.api.http) = {
-///           patch: "/v1/messages/{message_id}"
-///           body: "*"
-///         };
-///       }
-///     }
-///     message Message {
-///       string message_id = 1;
-///       string text = 2;
-///     }
+///      service Messaging {
+///        rpc UpdateMessage(Message) returns (Message) {
+///          option (google.api.http) = {
+///            patch: "/v1/messages/{message_id}"
+///            body: "*"
+///          };
+///        }
+///      }
+///      message Message {
+///        string message_id = 1;
+///        string text = 2;
+///      }
 ///
 ///
 /// The following HTTP JSON to RPC mapping is enabled:
@@ -158,20 +159,20 @@ pub struct Http {
 /// It is possible to define multiple HTTP methods for one RPC by using
 /// the `additional_bindings` option. Example:
 ///
-///     service Messaging {
-///       rpc GetMessage(GetMessageRequest) returns (Message) {
-///         option (google.api.http) = {
-///           get: "/v1/messages/{message_id}"
-///           additional_bindings {
-///             get: "/v1/users/{user_id}/messages/{message_id}"
-///           }
-///         };
-///       }
-///     }
-///     message GetMessageRequest {
-///       string message_id = 1;
-///       string user_id = 2;
-///     }
+///      service Messaging {
+///        rpc GetMessage(GetMessageRequest) returns (Message) {
+///          option (google.api.http) = {
+///            get: "/v1/messages/{message_id}"
+///            additional_bindings {
+///              get: "/v1/users/{user_id}/messages/{message_id}"
+///            }
+///          };
+///        }
+///      }
+///      message GetMessageRequest {
+///        string message_id = 1;
+///        string user_id = 2;
+///      }
 ///
 /// This enables the following two alternative HTTP JSON to RPC mappings:
 ///
@@ -184,27 +185,27 @@ pub struct Http {
 /// ## Rules for HTTP mapping
 ///
 /// 1. Leaf request fields (recursive expansion nested messages in the request
-///    message) are classified into three categories:
-///    - Fields referred by the path template. They are passed via the URL path.
-///    - Fields referred by the \[HttpRule.body][google.api.HttpRule.body\]. They are passed via the HTTP
-///      request body.
-///    - All other fields are passed via the URL query parameters, and the
-///      parameter name is the field path in the request message. A repeated
-///      field can be represented as multiple query parameters under the same
-///      name.
-///  2. If \[HttpRule.body][google.api.HttpRule.body\] is "*", there is no URL query parameter, all fields
-///     are passed via URL path and HTTP request body.
-///  3. If \[HttpRule.body][google.api.HttpRule.body\] is omitted, there is no HTTP request body, all
-///     fields are passed via URL path and URL query parameters.
+///     message) are classified into three categories:
+///     - Fields referred by the path template. They are passed via the URL path.
+///     - Fields referred by the \[HttpRule.body][google.api.HttpRule.body\]. They are passed via the HTTP
+///       request body.
+///     - All other fields are passed via the URL query parameters, and the
+///       parameter name is the field path in the request message. A repeated
+///       field can be represented as multiple query parameters under the same
+///       name.
+///   2. If \[HttpRule.body][google.api.HttpRule.body\] is "*", there is no URL query parameter, all fields
+///      are passed via URL path and HTTP request body.
+///   3. If \[HttpRule.body][google.api.HttpRule.body\] is omitted, there is no HTTP request body, all
+///      fields are passed via URL path and URL query parameters.
 ///
 /// ### Path template syntax
 ///
-///     Template = "/" Segments [ Verb ] ;
-///     Segments = Segment { "/" Segment } ;
-///     Segment  = "*" | "**" | LITERAL | Variable ;
-///     Variable = "{" FieldPath [ "=" Segments ] "}" ;
-///     FieldPath = IDENT { "." IDENT } ;
-///     Verb     = ":" LITERAL ;
+///      Template = "/" Segments [ Verb ] ;
+///      Segments = Segment { "/" Segment } ;
+///      Segment  = "*" | "**" | LITERAL | Variable ;
+///      Variable = "{" FieldPath [ "=" Segments ] "}" ;
+///      FieldPath = IDENT { "." IDENT } ;
+///      Verb     = ":" LITERAL ;
 ///
 /// The syntax `*` matches a single URL path segment. The syntax `**` matches
 /// zero or more URL path segments, which must be the last part of the URL path
@@ -253,11 +254,11 @@ pub struct Http {
 ///
 /// Example:
 ///
-///     http:
-///       rules:
-///         # Selects a gRPC method and applies HttpRule to it.
-///         - selector: example.v1.Messaging.GetMessage
-///           get: /v1/messages/{message_id}/{sub.subfield}
+///      http:
+///        rules:
+///          # Selects a gRPC method and applies HttpRule to it.
+///          - selector: example.v1.Messaging.GetMessage
+///            get: /v1/messages/{message_id}/{sub.subfield}
 ///
 /// ## Special notes
 ///
@@ -286,6 +287,7 @@ pub struct Http {
 /// If an API needs to use a JSON array for request or response body, it can map
 /// the request or response body to a repeated field. However, some gRPC
 /// Transcoding implementations may not support this feature.
+#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct HttpRule {
     /// Selects a method to which this rule applies.
@@ -325,6 +327,7 @@ pub mod http_rule {
     /// Determines the URL pattern is matched by this rules. This pattern can be
     /// used with any of the {get|put|post|delete|patch} methods. A custom method
     /// can be defined using the 'custom' field.
+    #[allow(clippy::derive_partial_eq_without_eq)]
     #[derive(Clone, PartialEq, ::prost::Oneof)]
     pub enum Pattern {
         /// Maps to HTTP GET. Used for listing and getting information about
@@ -352,6 +355,7 @@ pub mod http_rule {
     }
 }
 /// A custom pattern is used for defining custom HTTP verb.
+#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CustomHttpPattern {
     /// The name of this custom HTTP verb.
@@ -404,6 +408,38 @@ pub enum FieldBehavior {
     /// non-empty value to expect.
     NonEmptyDefault = 7,
 }
+impl FieldBehavior {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            FieldBehavior::Unspecified => "FIELD_BEHAVIOR_UNSPECIFIED",
+            FieldBehavior::Optional => "OPTIONAL",
+            FieldBehavior::Required => "REQUIRED",
+            FieldBehavior::OutputOnly => "OUTPUT_ONLY",
+            FieldBehavior::InputOnly => "INPUT_ONLY",
+            FieldBehavior::Immutable => "IMMUTABLE",
+            FieldBehavior::UnorderedList => "UNORDERED_LIST",
+            FieldBehavior::NonEmptyDefault => "NON_EMPTY_DEFAULT",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "FIELD_BEHAVIOR_UNSPECIFIED" => Some(Self::Unspecified),
+            "OPTIONAL" => Some(Self::Optional),
+            "REQUIRED" => Some(Self::Required),
+            "OUTPUT_ONLY" => Some(Self::OutputOnly),
+            "INPUT_ONLY" => Some(Self::InputOnly),
+            "IMMUTABLE" => Some(Self::Immutable),
+            "UNORDERED_LIST" => Some(Self::UnorderedList),
+            "NON_EMPTY_DEFAULT" => Some(Self::NonEmptyDefault),
+            _ => None,
+        }
+    }
+}
 /// A simple descriptor of a resource type.
 ///
 /// ResourceDescriptor annotates a resource message (either by means of a
@@ -412,45 +448,46 @@ pub enum FieldBehavior {
 ///
 /// Example:
 ///
-///     message Topic {
-///       // Indicates this message defines a resource schema.
-///       // Declares the resource type in the format of {service}/{kind}.
-///       // For Kubernetes resources, the format is {api group}/{kind}.
-///       option (google.api.resource) = {
-///         type: "pubsub.googleapis.com/Topic"
-///         pattern: "projects/{project}/topics/{topic}"
-///       };
-///     }
+///      message Topic {
+///        // Indicates this message defines a resource schema.
+///        // Declares the resource type in the format of {service}/{kind}.
+///        // For Kubernetes resources, the format is {api group}/{kind}.
+///        option (google.api.resource) = {
+///          type: "pubsub.googleapis.com/Topic"
+///          pattern: "projects/{project}/topics/{topic}"
+///        };
+///      }
 ///
 /// The ResourceDescriptor Yaml config will look like:
 ///
-///     resources:
-///     - type: "pubsub.googleapis.com/Topic"
-///       pattern: "projects/{project}/topics/{topic}"
+///      resources:
+///      - type: "pubsub.googleapis.com/Topic"
+///        pattern: "projects/{project}/topics/{topic}"
 ///
 /// Sometimes, resources have multiple patterns, typically because they can
 /// live under multiple parents.
 ///
 /// Example:
 ///
-///     message LogEntry {
-///       option (google.api.resource) = {
-///         type: "logging.googleapis.com/LogEntry"
-///         pattern: "projects/{project}/logs/{log}"
-///         pattern: "folders/{folder}/logs/{log}"
-///         pattern: "organizations/{organization}/logs/{log}"
-///         pattern: "billingAccounts/{billing_account}/logs/{log}"
-///       };
-///     }
+///      message LogEntry {
+///        option (google.api.resource) = {
+///          type: "logging.googleapis.com/LogEntry"
+///          pattern: "projects/{project}/logs/{log}"
+///          pattern: "folders/{folder}/logs/{log}"
+///          pattern: "organizations/{organization}/logs/{log}"
+///          pattern: "billingAccounts/{billing_account}/logs/{log}"
+///        };
+///      }
 ///
 /// The ResourceDescriptor Yaml config will look like:
 ///
-///     resources:
-///     - type: 'logging.googleapis.com/LogEntry'
-///       pattern: "projects/{project}/logs/{log}"
-///       pattern: "folders/{folder}/logs/{log}"
-///       pattern: "organizations/{organization}/logs/{log}"
-///       pattern: "billingAccounts/{billing_account}/logs/{log}"
+///      resources:
+///      - type: 'logging.googleapis.com/LogEntry'
+///        pattern: "projects/{project}/logs/{log}"
+///        pattern: "folders/{folder}/logs/{log}"
+///        pattern: "organizations/{organization}/logs/{log}"
+///        pattern: "billingAccounts/{billing_account}/logs/{log}"
+#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ResourceDescriptor {
     /// The resource type. It must be in the format of
@@ -471,14 +508,14 @@ pub struct ResourceDescriptor {
     /// The path pattern must follow the syntax, which aligns with HTTP binding
     /// syntax:
     ///
-    ///     Template = Segment { "/" Segment } ;
-    ///     Segment = LITERAL | Variable ;
-    ///     Variable = "{" LITERAL "}" ;
+    ///      Template = Segment { "/" Segment } ;
+    ///      Segment = LITERAL | Variable ;
+    ///      Variable = "{" LITERAL "}" ;
     ///
     /// Examples:
     ///
-    ///     - "projects/{project}/topics/{topic}"
-    ///     - "projects/{project}/knowledgeBases/{knowledge_base}"
+    ///      - "projects/{project}/topics/{topic}"
+    ///      - "projects/{project}/knowledgeBases/{knowledge_base}"
     ///
     /// The components in braces correspond to the IDs for each resource in the
     /// hierarchy. It is expected that, if multiple patterns are provided,
@@ -494,17 +531,17 @@ pub struct ResourceDescriptor {
     ///
     /// Example:
     ///
-    ///     // The InspectTemplate message originally only supported resource
-    ///     // names with organization, and project was added later.
-    ///     message InspectTemplate {
-    ///       option (google.api.resource) = {
-    ///         type: "dlp.googleapis.com/InspectTemplate"
-    ///         pattern:
-    ///         "organizations/{organization}/inspectTemplates/{inspect_template}"
-    ///         pattern: "projects/{project}/inspectTemplates/{inspect_template}"
-    ///         history: ORIGINALLY_SINGLE_PATTERN
-    ///       };
-    ///     }
+    ///      // The InspectTemplate message originally only supported resource
+    ///      // names with organization, and project was added later.
+    ///      message InspectTemplate {
+    ///        option (google.api.resource) = {
+    ///          type: "dlp.googleapis.com/InspectTemplate"
+    ///          pattern:
+    ///          "organizations/{organization}/inspectTemplates/{inspect_template}"
+    ///          pattern: "projects/{project}/inspectTemplates/{inspect_template}"
+    ///          history: ORIGINALLY_SINGLE_PATTERN
+    ///        };
+    ///      }
     #[prost(enumeration = "resource_descriptor::History", tag = "4")]
     pub history: i32,
     /// The plural name used in the resource name and permission names, such as
@@ -545,6 +582,28 @@ pub mod resource_descriptor {
         /// that from being necessary once there are multiple patterns.)
         FutureMultiPattern = 2,
     }
+    impl History {
+        /// String value of the enum field names used in the ProtoBuf definition.
+        ///
+        /// The values are not transformed in any way and thus are considered stable
+        /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+        pub fn as_str_name(&self) -> &'static str {
+            match self {
+                History::Unspecified => "HISTORY_UNSPECIFIED",
+                History::OriginallySinglePattern => "ORIGINALLY_SINGLE_PATTERN",
+                History::FutureMultiPattern => "FUTURE_MULTI_PATTERN",
+            }
+        }
+        /// Creates an enum from field names used in the ProtoBuf definition.
+        pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+            match value {
+                "HISTORY_UNSPECIFIED" => Some(Self::Unspecified),
+                "ORIGINALLY_SINGLE_PATTERN" => Some(Self::OriginallySinglePattern),
+                "FUTURE_MULTI_PATTERN" => Some(Self::FutureMultiPattern),
+                _ => None,
+            }
+        }
+    }
     /// A flag representing a specific style that a resource claims to conform to.
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
     #[repr(i32)]
@@ -561,31 +620,52 @@ pub mod resource_descriptor {
         /// additional checks.
         DeclarativeFriendly = 1,
     }
+    impl Style {
+        /// String value of the enum field names used in the ProtoBuf definition.
+        ///
+        /// The values are not transformed in any way and thus are considered stable
+        /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+        pub fn as_str_name(&self) -> &'static str {
+            match self {
+                Style::Unspecified => "STYLE_UNSPECIFIED",
+                Style::DeclarativeFriendly => "DECLARATIVE_FRIENDLY",
+            }
+        }
+        /// Creates an enum from field names used in the ProtoBuf definition.
+        pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+            match value {
+                "STYLE_UNSPECIFIED" => Some(Self::Unspecified),
+                "DECLARATIVE_FRIENDLY" => Some(Self::DeclarativeFriendly),
+                _ => None,
+            }
+        }
+    }
 }
 /// Defines a proto annotation that describes a string field that refers to
 /// an API resource.
+#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ResourceReference {
     /// The resource type that the annotated field references.
     ///
     /// Example:
     ///
-    ///     message Subscription {
-    ///       string topic = 2 [(google.api.resource_reference) = {
-    ///         type: "pubsub.googleapis.com/Topic"
-    ///       }];
-    ///     }
+    ///      message Subscription {
+    ///        string topic = 2 [(google.api.resource_reference) = {
+    ///          type: "pubsub.googleapis.com/Topic"
+    ///        }];
+    ///      }
     ///
     /// Occasionally, a field may reference an arbitrary resource. In this case,
     /// APIs use the special value * in their resource reference.
     ///
     /// Example:
     ///
-    ///     message GetIamPolicyRequest {
-    ///       string resource = 2 [(google.api.resource_reference) = {
-    ///         type: "*"
-    ///       }];
-    ///     }
+    ///      message GetIamPolicyRequest {
+    ///        string resource = 2 [(google.api.resource_reference) = {
+    ///          type: "*"
+    ///        }];
+    ///      }
     #[prost(string, tag = "1")]
     pub r#type: ::prost::alloc::string::String,
     /// The resource type of a child collection that the annotated field
@@ -594,15 +674,16 @@ pub struct ResourceReference {
     ///
     /// Example:
     ///
-    ///     message ListLogEntriesRequest {
-    ///       string parent = 1 [(google.api.resource_reference) = {
-    ///         child_type: "logging.googleapis.com/LogEntry"
-    ///       };
-    ///     }
+    ///      message ListLogEntriesRequest {
+    ///        string parent = 1 [(google.api.resource_reference) = {
+    ///          child_type: "logging.googleapis.com/LogEntry"
+    ///        };
+    ///      }
     #[prost(string, tag = "2")]
     pub child_type: ::prost::alloc::string::String,
 }
 /// A description of a label.
+#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct LabelDescriptor {
     /// The label key.
@@ -627,6 +708,28 @@ pub mod label_descriptor {
         Bool = 1,
         /// A 64-bit signed integer.
         Int64 = 2,
+    }
+    impl ValueType {
+        /// String value of the enum field names used in the ProtoBuf definition.
+        ///
+        /// The values are not transformed in any way and thus are considered stable
+        /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+        pub fn as_str_name(&self) -> &'static str {
+            match self {
+                ValueType::String => "STRING",
+                ValueType::Bool => "BOOL",
+                ValueType::Int64 => "INT64",
+            }
+        }
+        /// Creates an enum from field names used in the ProtoBuf definition.
+        pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+            match value {
+                "STRING" => Some(Self::String),
+                "BOOL" => Some(Self::Bool),
+                "INT64" => Some(Self::Int64),
+                _ => None,
+            }
+        }
     }
 }
 /// The launch stage as defined by [Google Cloud Platform
@@ -672,6 +775,38 @@ pub enum LaunchStage {
     /// Policy](<https://cloud.google.com/terms/deprecation>) documentation.
     Deprecated = 5,
 }
+impl LaunchStage {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            LaunchStage::Unspecified => "LAUNCH_STAGE_UNSPECIFIED",
+            LaunchStage::Unimplemented => "UNIMPLEMENTED",
+            LaunchStage::Prelaunch => "PRELAUNCH",
+            LaunchStage::EarlyAccess => "EARLY_ACCESS",
+            LaunchStage::Alpha => "ALPHA",
+            LaunchStage::Beta => "BETA",
+            LaunchStage::Ga => "GA",
+            LaunchStage::Deprecated => "DEPRECATED",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "LAUNCH_STAGE_UNSPECIFIED" => Some(Self::Unspecified),
+            "UNIMPLEMENTED" => Some(Self::Unimplemented),
+            "PRELAUNCH" => Some(Self::Prelaunch),
+            "EARLY_ACCESS" => Some(Self::EarlyAccess),
+            "ALPHA" => Some(Self::Alpha),
+            "BETA" => Some(Self::Beta),
+            "GA" => Some(Self::Ga),
+            "DEPRECATED" => Some(Self::Deprecated),
+            _ => None,
+        }
+    }
+}
 /// An object that describes the schema of a \[MonitoredResource][google.api.MonitoredResource\] object using a
 /// type name and a set of labels.  For example, the monitored resource
 /// descriptor for Google Compute Engine VM instances has a type of
@@ -682,6 +817,7 @@ pub enum LaunchStage {
 /// provide a `list` method that returns the monitored resource descriptors used
 /// by the API.
 ///
+#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MonitoredResourceDescriptor {
     /// Optional. The resource name of the monitored resource descriptor:
@@ -725,9 +861,10 @@ pub struct MonitoredResourceDescriptor {
 /// \[MonitoredResourceDescriptor][google.api.MonitoredResourceDescriptor\] for `"gce_instance"` has labels
 /// `"instance_id"` and `"zone"`:
 ///
-///     { "type": "gce_instance",
-///       "labels": { "instance_id": "12345678901234",
-///                   "zone": "us-central1-a" }}
+///      { "type": "gce_instance",
+///        "labels": { "instance_id": "12345678901234",
+///                    "zone": "us-central1-a" }}
+#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MonitoredResource {
     /// Required. The monitored resource type. This field must match
@@ -748,6 +885,7 @@ pub struct MonitoredResource {
 /// auxiliary metadata. Monitoring and Logging use an ingestion
 /// pipeline to extract metadata for cloud resources of all types, and store
 /// the metadata in this message.
+#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MonitoredResourceMetadata {
     /// Output only. Values for predefined system metadata labels.
@@ -757,9 +895,9 @@ pub struct MonitoredResourceMetadata {
     /// System label values can be only strings, Boolean values, or a list of
     /// strings. For example:
     ///
-    ///     { "name": "my-test-instance",
-    ///       "security_group": ["a", "b", "c"],
-    ///       "spot_instance": false }
+    ///      { "name": "my-test-instance",
+    ///        "security_group": ["a", "b", "c"],
+    ///        "spot_instance": false }
     #[prost(message, optional, tag = "1")]
     pub system_labels: ::core::option::Option<::prost_types::Struct>,
     /// Output only. A map of user-defined metadata labels.

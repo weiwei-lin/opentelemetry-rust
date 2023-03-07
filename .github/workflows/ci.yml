@@ -1,4 +1,6 @@
 name: CI
+env:
+  CI: true
 on:
   pull_request:
   push:
@@ -68,11 +70,13 @@ jobs:
     - uses: actions-rs/toolchain@v1
       with:
         profile: minimal
-        toolchain: 1.49.0
+        toolchain: 1.57
         override: true
+    - name: Patch dependencies versions # some dependencies bump MSRV without major version bump
+      run: ./scripts/patch_dependencies.sh
     - name: Run tests
       run: cargo --version &&
-        cargo test --verbose --manifest-path=opentelemetry/Cargo.toml --features trace,metrics,serialize,rt-tokio,serde,testing &&
+        cargo test --manifest-path=opentelemetry/Cargo.toml --features trace,metrics,rt-tokio,testing &&
         cargo test --manifest-path=opentelemetry-jaeger/Cargo.toml --features rt-tokio &&
         cargo test --manifest-path=opentelemetry-zipkin/Cargo.toml
   cargo-deny:
@@ -83,6 +87,22 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@v1
         with:
           command: check advisories
+  docs:
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly
+          components: rustfmt
+          override: true
+      - uses: arduino/setup-protoc@v1
+      - name: doc
+        run: cargo doc --no-deps --all-features
+        env:
+          CARGO_INCREMENTAL: '0'
+          RUSTDOCFLAGS: -Dwarnings
   coverage:
     continue-on-error: true
     runs-on: ubuntu-latest
@@ -95,15 +115,10 @@ jobs:
         toolchain: nightly
         components: rustfmt
         override: true
-    - uses: arduino/setup-protoc@v1
-    - name: doc
-      run: cargo doc --no-deps --all-features
-      env:
-        RUSTDOCFLAGS: -Dwarnings
     - uses: actions-rs/cargo@v1
       with:
         command: test
-        args: -p opentelemetry -p opentelemetry-aws -p opentelemetry-jaeger -p opentelemetry-datadog -p opentelemetry-dynatrace -p opentelemetry-zipkin --all-features --no-fail-fast
+        args: -p opentelemetry -p opentelemetry_api -p opentelemetry_sdk -p opentelemetry-aws -p opentelemetry-jaeger -p opentelemetry-datadog -p opentelemetry-dynatrace -p opentelemetry-zipkin --all-features --no-fail-fast
       env:
         CARGO_INCREMENTAL: '0'
         RUSTFLAGS: '-Zprofile -Ccodegen-units=1 -Cinline-threshold=0 -Clink-dead-code -Coverflow-checks=off -Cpanic=abort -Zpanic_abort_tests'

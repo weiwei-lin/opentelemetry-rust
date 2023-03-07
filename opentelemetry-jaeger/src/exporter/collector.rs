@@ -1,26 +1,14 @@
 //! # HTTP Jaeger Collector Client
+//!
+#[cfg(feature = "collector_client")]
 use http::Uri;
 #[cfg(feature = "collector_client")]
 use opentelemetry_http::{HttpClient, ResponseExt as _};
-use std::sync::atomic::AtomicUsize;
 
-/// `CollectorAsyncClientHttp` implements an async version of the
-/// `TCollectorSyncClient` interface over HTTP
-#[derive(Debug)]
-pub(crate) struct CollectorAsyncClientHttp {
-    endpoint: Uri,
-    #[cfg(feature = "collector_client")]
-    client: Box<dyn HttpClient>,
-    #[cfg(all(feature = "wasm_collector_client", not(feature = "collector_client")))]
-    client: WasmHttpClient,
-    payload_size_estimate: AtomicUsize,
-}
-
+#[cfg(feature = "collector_client")]
+pub(crate) use collector_client::AsyncHttpClient;
 #[cfg(feature = "wasm_collector_client")]
-#[derive(Debug)]
-struct WasmHttpClient {
-    _auth: Option<String>,
-}
+pub(crate) use wasm_collector_client::WasmCollector;
 
 #[cfg(feature = "collector_client")]
 mod collector_client {
@@ -31,14 +19,23 @@ mod collector_client {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use thrift::protocol::TBinaryOutputProtocol;
 
-    impl CollectorAsyncClientHttp {
+    /// `AsyncHttpClient` implements an async version of the
+    /// `TCollectorSyncClient` interface over HTTP
+    #[derive(Debug)]
+    pub(crate) struct AsyncHttpClient {
+        endpoint: Uri,
+        http_client: Box<dyn HttpClient>,
+        payload_size_estimate: AtomicUsize,
+    }
+
+    impl AsyncHttpClient {
         /// Create a new HTTP collector client
         pub(crate) fn new(endpoint: Uri, client: Box<dyn HttpClient>) -> Self {
             let payload_size_estimate = AtomicUsize::new(512);
 
-            CollectorAsyncClientHttp {
+            AsyncHttpClient {
                 endpoint,
-                client,
+                http_client: client,
                 payload_size_estimate,
             }
         }
@@ -68,19 +65,19 @@ mod collector_client {
                 .expect("request should always be valid");
 
             // Send request to collector
-            let _ = self.client.send(req).await?.error_for_status()?;
+            let _ = self.http_client.send(req).await?.error_for_status()?;
             Ok(())
         }
     }
 }
 
-#[cfg(all(feature = "wasm_collector_client", not(feature = "collector_client")))]
+#[cfg(feature = "wasm_collector_client")]
 mod wasm_collector_client {
-    use super::*;
     use crate::exporter::thrift::jaeger;
     use futures_util::future;
     use http::Uri;
     use js_sys::Uint8Array;
+    use pin_project_lite::pin_project;
     use std::future::Future;
     use std::io::{self, Cursor};
     use std::pin::Pin;
@@ -91,7 +88,19 @@ mod wasm_collector_client {
     use wasm_bindgen_futures::JsFuture;
     use web_sys::{Request, RequestCredentials, RequestInit, RequestMode, Response};
 
-    impl CollectorAsyncClientHttp {
+    #[derive(Debug)]
+    pub(crate) struct WasmCollector {
+        endpoint: Uri,
+        payload_size_estimate: AtomicUsize,
+        client: WasmHttpClient,
+    }
+
+    #[derive(Debug, Default)]
+    struct WasmHttpClient {
+        auth: Option<String>,
+    }
+
+    impl WasmCollector {
         /// Create a new HTTP collector client
         pub(crate) fn new(
             endpoint: Uri,
@@ -111,7 +120,7 @@ mod wasm_collector_client {
 
             Ok(Self {
                 endpoint,
-                client: WasmHttpClient { _auth: auth },
+                client: WasmHttpClient { auth },
                 payload_size_estimate,
             })
         }
@@ -124,7 +133,7 @@ mod wasm_collector_client {
         {
             self.build_request(batch)
                 .map(post_request)
-                .map(|fut| future::Either::Left(SubmitBatchFuture(fut)))
+                .map(|fut| future::Either::Left(SubmitBatchFuture { fut }))
                 .unwrap_or_else(|e| future::Either::Right(future::err(e)))
         }
 
@@ -191,19 +200,22 @@ mod wasm_collector_client {
         Ok(jaeger::BatchSubmitResponse { ok: true })
     }
 
-    /// Wrapper of web fetch API future marked as Send.
-    ///
-    /// At the moment, the web APIs are single threaded. Since all opentelemetry futures are
-    /// required to be Send, we mark this future as Send.
-    #[pin_project::pin_project]
-    struct SubmitBatchFuture<F>(#[pin] F);
+    pin_project! {
+        /// Wrapper of web fetch API future marked as Send.
+        ///
+        /// At the moment, the web APIs are single threaded. Since all opentelemetry futures are
+        /// required to be Send, we mark this future as Send.
+        struct SubmitBatchFuture<F> {
+            #[pin] fut: F
+        }
+    }
 
     unsafe impl<F> Send for SubmitBatchFuture<F> {}
 
     impl<F: Future> Future for SubmitBatchFuture<F> {
         type Output = F::Output;
         fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-            self.project().0.poll(cx)
+            self.project().fut.poll(cx)
         }
     }
 

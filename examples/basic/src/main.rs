@@ -1,41 +1,43 @@
-use futures_util::{Stream, StreamExt as _};
-use opentelemetry::global;
 use opentelemetry::global::shutdown_tracer_provider;
+use opentelemetry::metrics::MetricsError;
+use opentelemetry::sdk::metrics::controllers::BasicController;
+use opentelemetry::sdk::metrics::{controllers, processors, selectors};
 use opentelemetry::sdk::trace::Config;
-use opentelemetry::sdk::{metrics::PushController, trace as sdktrace, Resource};
+use opentelemetry::sdk::{export, trace as sdktrace, Resource};
 use opentelemetry::trace::TraceError;
 use opentelemetry::{
     baggage::BaggageExt,
-    metrics::{MetricsError, ObserverResult},
     trace::{TraceContextExt, Tracer},
     Context, Key, KeyValue,
 };
+use opentelemetry::{global, runtime};
 use std::error::Error;
-use std::time::Duration;
 
 fn init_tracer() -> Result<sdktrace::Tracer, TraceError> {
-    opentelemetry_jaeger::new_pipeline()
+    opentelemetry_jaeger::new_agent_pipeline()
         .with_service_name("trace-demo")
         .with_trace_config(Config::default().with_resource(Resource::new(vec![
             KeyValue::new("service.name", "new_service"),
             KeyValue::new("exporter", "otlp-jaeger"),
         ])))
-        .install_batch(opentelemetry::runtime::Tokio)
+        .install_batch(runtime::Tokio)
 }
 
-// Skip first immediate tick from tokio, not needed for async_std.
-fn delayed_interval(duration: Duration) -> impl Stream<Item = tokio::time::Instant> {
-    opentelemetry::util::tokio_interval_stream(duration).skip(1)
-}
+fn init_metrics() -> Result<BasicController, MetricsError> {
+    let exporter = export::metrics::stdout().build()?;
+    let pusher = controllers::basic(processors::factory(
+        selectors::simple::inexpensive(),
+        exporter.temporality_selector(),
+    ))
+    .with_exporter(exporter)
+    .build();
 
-fn init_meter() -> PushController {
-    opentelemetry::sdk::export::metrics::stdout(tokio::spawn, delayed_interval)
-        .with_formatter(|batch| {
-            serde_json::to_value(batch)
-                .map(|value| value.to_string())
-                .map_err(|err| MetricsError::Other(err.to_string()))
-        })
-        .init()
+    let cx = Context::new();
+    pusher.start(&cx, runtime::Tokio)?;
+
+    global::set_meter_provider(pusher.clone());
+
+    Ok(pusher)
 }
 
 const FOO_KEY: Key = Key::from_static_str("ex.com/foo");
@@ -58,25 +60,24 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
     // matches the containing block, reporting traces and metrics during the whole
     // execution.
     let _tracer = init_tracer()?;
-    let _started = init_meter();
+    let controller = init_metrics()?;
+    let cx = Context::new();
 
     let tracer = global::tracer("ex.com/basic");
     let meter = global::meter("ex.com/basic");
 
-    let one_metric_callback =
-        |res: ObserverResult<f64>| res.observe(1.0, COMMON_ATTRIBUTES.as_ref());
-    let _ = meter
-        .f64_value_observer("ex.com.one", one_metric_callback)
-        .with_description("A ValueObserver set to 1.0")
+    let observable_counter = meter
+        .u64_observable_counter("ex.com.one")
+        .with_description("An observable counter set to 1.0")
         .init();
 
-    let value_recorder_two = meter.f64_value_recorder("ex.com.two").init();
+    let histogram = meter.f64_histogram("ex.com.three").init();
+
+    let observable_gauge = meter.f64_observable_gauge("ex.com.two").init();
 
     let _baggage =
         Context::current_with_baggage(vec![FOO_KEY.string("foo1"), BAR_KEY.string("bar1")])
             .attach();
-
-    let value_recorder = value_recorder_two.bind(COMMON_ATTRIBUTES.as_ref());
 
     tracer.in_span("operation", |cx| {
         let span = cx.span();
@@ -86,24 +87,23 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
         );
         span.set_attribute(ANOTHER_KEY.string("yes"));
 
-        meter.record_batch_with_context(
-            // Note: call-site variables added as context Entries:
-            &Context::current_with_baggage(vec![ANOTHER_KEY.string("xyz")]),
-            COMMON_ATTRIBUTES.as_ref(),
-            vec![value_recorder_two.measurement(2.0)],
-        );
+        let _ = meter.register_callback(move |cx| {
+            observable_counter.observe(cx, 1, &[]);
+            observable_gauge.observe(cx, 2.0, &[]);
+        });
 
         tracer.in_span("Sub operation...", |cx| {
             let span = cx.span();
             span.set_attribute(LEMONS_KEY.string("five"));
 
-            span.add_event("Sub span event".to_string(), vec![]);
+            span.add_event("Sub span event", vec![]);
 
-            value_recorder.record(1.3);
+            histogram.record(&cx, 1.3, &[]);
         });
     });
 
     shutdown_tracer_provider(); // sending remaining spans.
+    controller.stop(&cx)?; // send remaining metrics.
 
     Ok(())
 }

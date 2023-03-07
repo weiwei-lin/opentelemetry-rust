@@ -8,8 +8,10 @@
 //! You can start a new Dynatrace metrics pipeline by using [`DynatracePipelineBuilder::metrics()`].
 //!
 //! ```no_run
-//! use opentelemetry::sdk::metrics::{selectors, PushController};
-//! use opentelemetry::util::tokio_interval_stream;
+//! use opentelemetry::runtime;
+//! use opentelemetry::sdk::export::metrics::aggregation::cumulative_temporality_selector;
+//! use opentelemetry::sdk::metrics::selectors;
+//! use opentelemetry::sdk::util::tokio_interval_stream;
 //! use opentelemetry_dynatrace::ExportConfig;
 //!
 //! fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
@@ -19,7 +21,11 @@
 //!
 //!     // Then pass the exporter into pipeline builder
 //!     let meter = opentelemetry_dynatrace::new_pipeline()
-//!         .metrics(tokio::spawn, tokio_interval_stream)
+//!         .metrics(
+//!             selectors::simple::inexpensive(),
+//!             cumulative_temporality_selector(),
+//!             runtime::Tokio,
+//!         )
 //!         .with_exporter(dynatrace_exporter)
 //!         .build();
 //!
@@ -37,8 +43,9 @@
 //!
 //! ```
 //! # #[cfg(feature = "reqwest-client")] {
-//! use opentelemetry::sdk::metrics::{selectors, PushController};
-//! use opentelemetry::util::tokio_interval_stream;
+//! use opentelemetry::runtime;
+//! use opentelemetry::sdk::metrics::selectors;
+//! use opentelemetry::sdk::export::metrics::aggregation::cumulative_temporality_selector;
 //! use opentelemetry::KeyValue;
 //! use opentelemetry_dynatrace::transform::DimensionSet;
 //! use opentelemetry_dynatrace::ExportConfig;
@@ -52,7 +59,11 @@
 //!     };
 //!
 //!     let meter = opentelemetry_dynatrace::new_pipeline()
-//!         .metrics(tokio::spawn, tokio_interval_stream)
+//!         .metrics(
+//!             selectors::simple::inexpensive(),
+//!             cumulative_temporality_selector(),
+//!             runtime::Tokio,
+//!         )
 //!         .with_exporter(
 //!             opentelemetry_dynatrace::new_exporter()
 //!                 .with_export_config(
@@ -74,7 +85,6 @@
 //!         .with_default_dimensions(DimensionSet::from(vec![
 //!             KeyValue::new("version", env!("CARGO_PKG_VERSION")),
 //!         ]))
-//!         .with_aggregator_selector(selectors::simple::Selector::Exact)
 //!         .build();
 //!
 //!     Ok(())
@@ -95,7 +105,11 @@
     unused
 )]
 #![allow(elided_lifetimes_in_paths)]
-#![cfg_attr(docsrs, feature(doc_cfg), deny(rustdoc::broken_intra_doc_links))]
+#![cfg_attr(
+    docsrs,
+    feature(doc_cfg, doc_auto_cfg),
+    deny(rustdoc::broken_intra_doc_links)
+)]
 #![cfg_attr(test, deny(warnings))]
 mod exporter;
 
@@ -222,10 +236,16 @@ impl DynatraceExporterBuilder {
 /// ## Examples
 ///
 /// ```no_run
-/// use opentelemetry::util::tokio_interval_stream;
+/// use opentelemetry::runtime;
+/// use opentelemetry::sdk::export::metrics::aggregation::cumulative_temporality_selector;
+/// use opentelemetry::sdk::metrics::selectors;
 /// # fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
 /// let meter = opentelemetry_dynatrace::new_pipeline()
-///     .metrics(tokio::spawn, tokio_interval_stream);
+///     .metrics(
+///         selectors::simple::inexpensive(),
+///         cumulative_temporality_selector(),
+///         runtime::Tokio,
+///     );
 /// # Ok(())
 /// # }
 /// ```

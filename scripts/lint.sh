@@ -33,7 +33,12 @@ if rustup component add clippy; then
   cargo_feature opentelemetry-jaeger "isahc_collector_client"
   cargo_feature opentelemetry-jaeger "reqwest_blocking_collector_client"
   cargo_feature opentelemetry-jaeger "reqwest_collector_client"
+  cargo_feature opentelemetry-jaeger "hyper_collector_client"
+  cargo_feature opentelemetry-jaeger "hyper_tls_collector_client"
   cargo_feature opentelemetry-jaeger "collector_client"
+  cargo_feature opentelemetry-jaeger "wasm_collector_client"
+  cargo_feature opentelemetry-jaeger "collector_client, wasm_collector_client"
+  cargo_feature opentelemetry-jaeger "default"
 
   cargo_feature opentelemetry-dynatrace "default"
   cargo_feature opentelemetry-dynatrace "metrics,rt-tokio,reqwest-client"
@@ -43,14 +48,16 @@ if rustup component add clippy; then
   cargo_feature opentelemetry-dynatrace "metrics,rt-tokio,surf-client,surf/curl-client"
   cargo_feature opentelemetry-dynatrace "metrics,rt-async-std"
 
+  cargo_feature opentelemetry-proto "default"
   cargo_feature opentelemetry-proto "full"
   cargo_feature opentelemetry-proto "gen-tonic,traces"
   cargo_feature opentelemetry-proto "gen-tonic,traces,with-serde"
-  cargo_feature opentelemetry-proto "gen-tonic,traces,build-client"
-  cargo_feature opentelemetry-proto "gen-tonic,metrics,build-client"
+  cargo_feature opentelemetry-proto "gen-tonic,traces"
+  cargo_feature opentelemetry-proto "gen-tonic,metrics"
   cargo_feature opentelemetry-proto "gen-protoc,traces"
   cargo_feature opentelemetry-proto "gen-protoc,traces,with-serde"
   cargo_feature opentelemetry-proto "gen-protoc,zpages"
   cargo_feature opentelemetry-proto "gen-protoc,zpages,with-serde"
+  cargo_feature opentelemetry-proto "gen-tonic, logs"
 
 fi

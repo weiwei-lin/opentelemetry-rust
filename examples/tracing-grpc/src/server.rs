@@ -7,6 +7,7 @@ use tracing::*;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use tracing_subscriber::prelude::*;
 
+#[allow(clippy::derive_partial_eq_without_eq)] // tonic don't derive Eq for generated types. We shouldn't manually change it.
 pub mod hello_world {
     tonic::include_proto!("helloworld"); // The string specified here must match the proto package name
 }
@@ -52,11 +53,11 @@ impl Greeter for MyGreeter {
         tracing::Span::current().set_parent(parent_cx);
 
         let name = request.into_inner().name;
-        expensive_fn(format!("Got name: {:?}", name));
+        expensive_fn(format!("Got name: {name:?}"));
 
         // Return an instance of type HelloReply
         let reply = hello_world::HelloReply {
-            message: format!("Hello {}!", name), // We must use .into_inner() as the fields of gRPC requests and responses are private
+            message: format!("Hello {name}!"), // We must use .into_inner() as the fields of gRPC requests and responses are private
         };
 
         Ok(Response::new(reply)) // Send back our formatted greeting

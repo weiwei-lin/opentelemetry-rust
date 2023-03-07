@@ -1,30 +1,28 @@
-//! This should show how to connect to a third party collector like
-//! honeycomb or lightstep using tonic with tls and using tokio as reactor.
-//! To run this you have to specify a few environment variables like in the example:
+//! This shows how to connect to a third party collector like
+//! honeycomb or lightstep using grpcio with tls and using async-std as reactor.
+//! To run this specify a few environment variables like in the example:
 //! ```shell
 //! OTLP_GRPCIO_ENDPOINT=https://api.honeycomb.io:443 \
 //! OTLP_GRPCIO_X_HONEYCOMB_TEAM=token \
 //! OTLP_GRPCIO_X_HONEYCOMB_DATASET=dataset \
-//! cargo run --bin external-otlp-tonic-tokio
+//! cargo run --bin external-otlp-grpcio-async-std
 //! ```
 use async_std::task::sleep;
-use opentelemetry::trace::TraceError;
-use opentelemetry::{global, sdk::trace as sdktrace};
 use opentelemetry::{
+    global::{shutdown_tracer_provider, tracer},
+    sdk::trace as sdktrace,
+    trace::TraceError,
     trace::{TraceContextExt, Tracer},
     Key,
 };
-use url::Url;
 use opentelemetry_otlp::WithExportConfig;
+use url::Url;
 
 use std::{
     collections::HashMap,
-    env::{set_var, vars},
-    time::Duration,
-};
-use std::{
-    env::{remove_var, var},
+    env::{remove_var, set_var, var, vars},
     error::Error,
+    time::Duration,
 };
 
 // Use the variables to try and export the example to any external collector that accepts otlp
@@ -40,8 +38,8 @@ fn init_tracer() -> Result<sdktrace::Tracer, TraceError> {
         )
     });
     let endpoint = Url::parse(&endpoint).expect("endpoint is not a valid url");
-
     remove_var(ENDPOINT);
+
     let headers: HashMap<_, _> = vars()
         .filter(|(name, _)| name.starts_with(HEADER_PREFIX))
         .map(|(name, value)| {
@@ -67,10 +65,11 @@ fn init_tracer() -> Result<sdktrace::Tracer, TraceError> {
                 .grpcio()
                 .with_endpoint(grpcio_endpoint)
                 .with_headers(headers)
-                .with_tls(true)
+                .with_tls(true),
         )
         .install_batch(opentelemetry::runtime::AsyncStd)
 }
+
 const LEMONS_KEY: Key = Key::from_static_str("ex.com/lemons");
 const ANOTHER_KEY: Key = Key::from_static_str("ex.com/another");
 
@@ -82,7 +81,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
     env_logger::init();
     let _ = init_tracer()?;
 
-    let tracer = global::tracer("ex.com/basic");
+    let tracer = tracer("ex.com/basic");
 
     tracer.in_span("operation", |cx| {
         let span = cx.span();
@@ -96,13 +95,14 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
             let span = cx.span();
             span.set_attribute(LEMONS_KEY.string("five"));
 
-            span.add_event("Sub span event".to_string(), vec![]);
+            span.add_event("Sub span event", vec![]);
         });
     });
 
     // wait for 1 minutes so that we could see metrics being pushed via OTLP every 10 seconds.
     sleep(Duration::from_secs(60)).await;
 
-    global::shutdown_tracer_provider();
+    shutdown_tracer_provider();
+
     Ok(())
 }

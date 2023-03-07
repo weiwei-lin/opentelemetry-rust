@@ -3,6 +3,8 @@ use crate::ExportConfig;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use super::default_headers;
+
 /// Configuration of grpcio
 #[derive(Debug)]
 pub struct GrpcioConfig {
@@ -26,7 +28,7 @@ impl Default for GrpcioConfig {
     fn default() -> Self {
         GrpcioConfig {
             credentials: None,
-            headers: None,
+            headers: Some(default_headers()),
             compression: None,
             use_tls: None,
             completion_queue_count: 2,
@@ -85,7 +87,9 @@ impl GrpcioExporterBuilder {
 
     /// Set additional headers to send to the collector.
     pub fn with_headers(mut self, headers: HashMap<String, String>) -> Self {
-        self.grpcio_config.headers = Some(headers);
+        let mut inst_headers = self.grpcio_config.headers.unwrap_or_default();
+        inst_headers.extend(headers.into_iter());
+        self.grpcio_config.headers = Some(inst_headers);
         self
     }
 
@@ -105,5 +109,37 @@ impl GrpcioExporterBuilder {
     pub fn with_completion_queue_count(mut self, count: usize) -> Self {
         self.grpcio_config.completion_queue_count = count;
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::GrpcioExporterBuilder;
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_with_headers() {
+        // metadata should merge with the current one with priority instead of just replacing it
+        let mut headers = HashMap::new();
+        headers.insert("key".to_string(), "value".to_string());
+        let builder = GrpcioExporterBuilder::default().with_headers(headers);
+        let result = builder.grpcio_config.headers.unwrap();
+        assert_eq!(result.get("key").unwrap(), "value");
+        assert!(result.get("User-Agent").is_some());
+
+        // metadata should override entries with the same key in the default one
+        let mut headers = HashMap::new();
+        headers.insert("User-Agent".to_string(), "baz".to_string());
+        let builder = GrpcioExporterBuilder::default().with_headers(headers);
+        let result = builder.grpcio_config.headers.unwrap();
+        assert_eq!(result.get("User-Agent").unwrap(), "baz");
+        assert_eq!(
+            result.len(),
+            GrpcioExporterBuilder::default()
+                .grpcio_config
+                .headers
+                .unwrap()
+                .len()
+        );
     }
 }
